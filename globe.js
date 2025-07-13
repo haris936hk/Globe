@@ -126,9 +126,21 @@ class WinnerGlobe {
             // Create the globe instance
             this.globe = Globe()(globeContainer)
                 .backgroundColor('#FFFFFF')
-                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#F5F5F5' }))
+                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#d2ecf7' }))
                 .polygonsData([...countries.features, ...states.features])
-                .polygonCapColor(feat => feat.properties.hasOwnProperty('name') ? 'rgba(0, 0, 0, 0)' : '#B41F27')
+                .polygonCapColor(feat => {
+                    const p = feat.properties || {};
+                    // Make non-country polygons (like water) transparent
+                    if (!p.ADMIN || p.featurecla !== 'Admin-0 country') {
+                        return 'rgba(0,0,0,0)';
+                    }
+                    // Only color the United States gold
+                    if (p.ADMIN === 'United States of America' || p.ADMIN === 'United States') {
+                        return '#FFD700'; // Gold for USA
+                    }
+                    return '#A9A9A9'; // Others
+                })
+                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#d2ecf7' }))
                 .polygonSideColor(() => '#000000')
                 .polygonAltitude(feat => feat.properties.hasOwnProperty('name') ? 0.006 : 0.005)
                 .enablePointerInteraction(true);
