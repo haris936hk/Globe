@@ -1,0 +1,41 @@
+{
+  "name": "winner-globe-visualization",
+  "version": "1.0.0",
+  "description": "An interactive 3D globe visualization that displays award winners around the world",
+  "main": "index.html",
+  "scripts": {
+    "start": "python -m http.server 8000",
+    "dev": "python -m http.server 8000",
+    "serve": "python -m http.server 8000"
+  },
+  "keywords": [
+    "3d",
+    "globe",
+    "visualization",
+    "threejs",
+    "globe.gl",
+    "interactive",
+    "winners",
+    "awards"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/winner-globe-visualization.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/winner-globe-visualization/issues"
+  },
+  "homepage": "https://github.com/yourusername/winner-globe-visualization#readme",
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ]
+} 
