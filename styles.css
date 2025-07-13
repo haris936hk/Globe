@@ -87,8 +87,15 @@ body {
 
 #globeViz {
     width: 100%;
-    height: 600px;
+    height: 50vw;
+    max-height: 600px;
+    min-height: 180px;
     position: relative;
+}
+#globeViz canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
 }
 
 /* Loading and Error States */
@@ -247,71 +254,103 @@ body {
         grid-template-columns: 1fr;
         gap: 20px;
     }
-    
     .sidebar {
-        order: -1;
+        order: 2;
+        margin-top: 20px;
+        max-width: 100%;
     }
-}
-
-@media (max-width: 768px) {
-    .container {
-        padding: 15px;
-    }
-    
-    .header h1 {
-        font-size: 2rem;
-    }
-    
-    .stats-bar {
-        flex-direction: column;
-        gap: 20px;
-    }
-    
-    .controls {
-        flex-wrap: wrap;
-        justify-content: center;
-    }
-    
-    .control-btn {
-        font-size: 0.8rem;
-        padding: 10px 12px;
-    }
-    
-    #globeViz {
-        height: 400px;
-    }
-    
     .globe-container {
         min-height: 400px;
     }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 900px) {
+    .container {
+        padding: 10px;
+    }
     .header h1 {
-        font-size: 1.5rem;
+        font-size: 1.7rem;
     }
-    
-    .header p {
-        font-size: 1rem;
-    }
-    
     .stats-bar {
-        padding: 15px;
+        flex-direction: column;
+        gap: 15px;
+        padding: 12px;
     }
-    
+    .sidebar {
+        padding: 0;
+    }
+    .winner-panel {
+        padding: 12px;
+    }
+    .globe-container {
+        min-height: 320px;
+    }
+    #globeViz {
+        height: 60vw;
+        max-height: 400px;
+        min-height: 140px;
+    }
+}
+
+@media (max-width: 600px) {
+    .container {
+        padding: 4px;
+    }
+    .header h1 {
+        font-size: 1.2rem;
+    }
+    .header p {
+        font-size: 0.95rem;
+    }
+    .stats-bar {
+        padding: 8px;
+        gap: 10px;
+    }
     .stat-value {
-        font-size: 1.5rem;
+        font-size: 1.1rem;
     }
-    
+    .main-content {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    .sidebar {
+        margin-top: 10px;
+        padding: 0;
+    }
+    .winner-panel {
+        padding: 8px;
+    }
+    .globe-container {
+        min-height: 200px;
+        border-radius: 10px;
+    }
+    #globeViz {
+        height: 70vw;
+        max-height: 250px;
+        min-height: 100px;
+    }
     .controls {
-        bottom: 10px;
-        gap: 5px;
+        position: static;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 4px;
+        margin-top: 8px;
+        transform: none;
     }
-    
     .control-btn {
-        padding: 8px 10px;
+        padding: 6px 8px;
         font-size: 0.7rem;
+        border-radius: 16px;
     }
+}
+
+/* Remove filter-panel styles */
+.filter-panel, .filter-btn, #categoryFilters {
+    display: none !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
 }
 
 /* Animation for pins */

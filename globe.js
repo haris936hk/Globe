@@ -133,6 +133,12 @@ class WinnerGlobe {
                 .polygonAltitude(feat => feat.properties.hasOwnProperty('name') ? 0.006 : 0.005)
                 .enablePointerInteraction(true);
 
+            // Ensure globe is sized to container on initial load
+            if (globeContainer && this.globe) {
+                this.globe.width(globeContainer.offsetWidth);
+                this.globe.height(globeContainer.offsetHeight);
+            }
+
             // Use custom SVG pin objects
             await this.setupCustomObjects();
 
@@ -157,6 +163,12 @@ class WinnerGlobe {
                     lng: -98.5795,
                     altitude: getResponsiveAltitude()
                 });
+                // Ensure the globe canvas and camera resize to the container
+                const globeViz = document.getElementById('globeViz');
+                if (globeViz && this.globe) {
+                    this.globe.width(globeViz.offsetWidth);
+                    this.globe.height(globeViz.offsetHeight);
+                }
             });
         } catch (err) {
             console.error('Error loading geographic data:', err);
@@ -176,10 +188,21 @@ class WinnerGlobe {
         const pins = this.winnersData.filter(d => d.lat && d.lng).map(winner => {
             // Clone the model for each winner
             const pin = baseObject.clone();
-            pin.scale.set(1, 1, 1); // Reduced size by 50%
+            pin.scale.set(1, 1, 1); // Keep visual size
             // Tilt the pin by 30 degrees (Math.PI/6 radians) around the X axis
             pin.rotation.x = Math.PI / 6;
             pin.userData = { winner };
+
+            // --- Add invisible hit area ---
+            const hitRadius = 0.08; // Adjust for desired hover area (default pin is much smaller)
+            const hitGeometry = new THREE.SphereGeometry(hitRadius, 16, 16);
+            const hitMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+            const hitSphere = new THREE.Mesh(hitGeometry, hitMaterial);
+            hitSphere.name = 'hitArea';
+            hitSphere.userData = { isHitArea: true };
+            pin.add(hitSphere);
+            // --- End invisible hit area ---
+
             return {
                 lat: winner.lat,
                 lng: winner.lng,
