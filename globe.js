@@ -211,6 +211,15 @@ class WinnerGlobe {
                 winner
             };
         });
+        // Track mouse position over the globe canvas
+        this.pointerPos = { x: 0, y: 0 };
+        const globeCanvas = document.querySelector('#globeViz canvas');
+        if (globeCanvas) {
+            globeCanvas.addEventListener('mousemove', e => {
+                this.pointerPos.x = e.clientX;
+                this.pointerPos.y = e.clientY;
+            });
+        }
         this.customObjects = pins;
         this.globe
             .objectsData(this.customObjects)
@@ -219,7 +228,46 @@ class WinnerGlobe {
             .objectAltitude('altitude')
             .objectThreeObject('threeObject')
             .onObjectClick(obj => this.showWinnerDetails(obj.winner))
-            .onObjectHover(obj => obj ? this.showWinnerDetails(obj.winner) : this.clearWinnerDetails());
+            .onObjectHover(obj => this.handlePopupHover(obj));
+    }
+
+    handlePopupHover(obj) {
+        let popup = document.getElementById('winnerPopup');
+        if (!popup) {
+            popup = document.createElement('div');
+            popup.id = 'winnerPopup';
+            popup.style.position = 'fixed';
+            popup.style.zIndex = 9999;
+            popup.style.display = 'none';
+            document.body.appendChild(popup);
+        }
+        if (obj) {
+            // Fill popup with winner details
+            popup.innerHTML = `
+                <div class="winner-popup-card">
+                    <div class="winner-popup-name">${obj.winner.name}</div>
+                    <div class="winner-popup-row"><strong>Location:</strong> ${obj.winner.city}, ${obj.winner.state}</div>
+                    <div class="winner-popup-row"><strong>Year:</strong> ${obj.winner.year}</div>
+                    <div class="winner-popup-row"><strong>Prize:</strong> ${obj.winner.prize}</div>
+                    <div class="winner-popup-row"><strong>Category:</strong> ${obj.winner.category}</div>
+                </div>
+            `;
+            popup.style.display = 'block';
+            // Use last known pointer position
+            const offset = 16;
+            let x = this.pointerPos ? this.pointerPos.x : window.innerWidth / 2;
+            let y = this.pointerPos ? this.pointerPos.y + offset : window.innerHeight / 2;
+            // Prevent overflow right/bottom
+            setTimeout(() => {
+                const rect = popup.getBoundingClientRect();
+                if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 8;
+                if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 8;
+                popup.style.left = x + 'px';
+                popup.style.top = y + 'px';
+            }, 0);
+        } else {
+            popup.style.display = 'none';
+        }
     }
 
     setupFallbackPoints() {
