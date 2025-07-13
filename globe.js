@@ -144,17 +144,19 @@ class WinnerGlobe {
 
             // Responsive altitude based on window size
             const getResponsiveAltitude = () => {
-                if (window.innerWidth < 500) return 3.2;
-                if (window.innerWidth < 900) return 2.5;
-                return 2.0;
+                if (window.innerWidth < 500) return 1.2;
+                if (window.innerWidth < 900) return 1.0;
+                return 0.8;
             };
 
-            // Set initial view to center on US
-            this.globe.pointOfView({
-                lat: 39.8283,
-                lng: -98.5795,
-                altitude: getResponsiveAltitude()
-            });
+            // Set initial view to center on US (after a short delay to ensure rendering)
+            setTimeout(() => {
+                this.globe.pointOfView({
+                    lat: 39.8283,
+                    lng: -98.5795,
+                    altitude: getResponsiveAltitude()
+                });
+            }, 100);
 
             // Update zoom on resize
             window.addEventListener('resize', () => {
@@ -190,7 +192,7 @@ class WinnerGlobe {
             const pin = baseObject.clone();
             pin.scale.set(1, 1, 1); // Keep visual size
             // Tilt the pin by 30 degrees (Math.PI/6 radians) around the X axis
-            pin.rotation.x = Math.PI / 6;
+            pin.rotation.x = Math.PI / 8;
             pin.userData = { winner };
 
             // --- Add invisible hit area ---
@@ -206,7 +208,7 @@ class WinnerGlobe {
             return {
                 lat: winner.lat,
                 lng: winner.lng,
-                altitude: 0.02, // Closer to the globe
+                altitude: 0.01, // Closer to the globe
                 threeObject: pin,
                 winner
             };
@@ -533,9 +535,9 @@ class WinnerGlobe {
         
         // Responsive altitude based on window size
         const getResponsiveAltitude = () => {
-            if (window.innerWidth < 500) return 3.2;
-            if (window.innerWidth < 900) return 2.5;
-            return 2.0;
+            if (window.innerWidth < 500) return 1.2;
+            if (window.innerWidth < 900) return 1.0;
+            return 0.8;
         };
         
         // Reset to US view
