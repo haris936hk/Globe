@@ -227,6 +227,20 @@ class FallbackMap {
             btn.disabled = true;
         });
 
+        // Add a note about fallback mode
+        const controlsContainer = document.querySelector('.controls');
+        if (controlsContainer) {
+            controlsContainer.innerHTML = `
+                <div style="color: rgba(255,255,255,0.8); text-align: center; padding: 10px;">
+                    <p>📱 Simplified 2D view - 3D globe unavailable</p>
+                    <p style="font-size: 12px; margin-top: 5px;">Click on winner cards above to see details</p>
+                    <button onclick="window.fallbackMap.clearWinnerDetails()" style="margin-top: 10px; padding: 8px 16px; background: rgba(255,255,255,0.2); color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        Clear Selection
+                    </button>
+                </div>
+            `;
+        }
+
         // Category filter buttons
         const filterButtons = document.querySelectorAll('.filter-btn');
         filterButtons.forEach(btn => {

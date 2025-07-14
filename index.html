@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Winner Globe Visualization</title>
     <link rel="stylesheet" href="styles.css">
     
@@ -12,7 +12,7 @@
     <script src="https://unpkg.com/globe.gl@2.28.0/dist/globe.gl.min.js"></script>
     
     <!-- Custom Map Pin (UMD) -->
-    
+    <script src="https://unpkg.com/custom-map-pin@1.0.0/dist/custom-map-pin.umd.js"></script>
 </head>
 <body>
     <div class="container">
@@ -61,6 +61,17 @@
                     <h3>Winner Details</h3>
                     <div id="selectedWinner">
                         <p>Click on a pin to see winner details</p>
+                    </div>
+                </div>
+
+                <div class="filter-panel">
+                    <h3>Filter by Category</h3>
+                    <div id="categoryFilters">
+                        <button class="filter-btn active" data-category="all">All Categories</button>
+                        <button class="filter-btn" data-category="Innovation">Innovation</button>
+                        <button class="filter-btn" data-category="Excellence">Excellence</button>
+                        <button class="filter-btn" data-category="Leadership">Leadership</button>
+                        <button class="filter-btn" data-category="Community Impact">Community Impact</button>
                     </div>
                 </div>
             </div>

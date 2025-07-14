@@ -126,64 +126,73 @@ class WinnerGlobe {
             // Create the globe instance
             this.globe = Globe()(globeContainer)
                 .backgroundColor('#FFFFFF')
-                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#d2ecf7' }))
+                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#F5F5F5' }))
                 .polygonsData([...countries.features, ...states.features])
-                .polygonCapColor(feat => {
-                    const p = feat.properties || {};
-                    // Make non-country polygons (like water) transparent
-                    if (!p.ADMIN || p.featurecla !== 'Admin-0 country') {
-                        return 'rgba(0,0,0,0)';
-                    }
-                    // Only color the United States gold
-                    if (p.ADMIN === 'United States of America' || p.ADMIN === 'United States') {
-                        return '#FFD700'; // Gold for USA
-                    }
-                    return '#A9A9A9'; // Others
-                })
-                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#d2ecf7' }))
+                .polygonCapColor(feat => feat.properties.hasOwnProperty('name') ? 'rgba(0, 0, 0, 0)' : '#B41F27')
                 .polygonSideColor(() => '#000000')
                 .polygonAltitude(feat => feat.properties.hasOwnProperty('name') ? 0.006 : 0.005)
                 .enablePointerInteraction(true);
 
-            // Ensure globe is sized to container on initial load
-            if (globeContainer && this.globe) {
-                this.globe.width(globeContainer.offsetWidth);
-                this.globe.height(globeContainer.offsetHeight);
-            }
-
             // Use custom SVG pin objects
             await this.setupCustomObjects();
 
-            // Responsive altitude based on window size
-            const getResponsiveAltitude = () => {
-                if (window.innerWidth < 500) return 1.2;
-                if (window.innerWidth < 900) return 1.0;
-                return 0.8;
+            // Responsive altitude and positioning based on window size
+            const getResponsiveSettings = () => {
+                if (window.innerWidth < 320) {
+                    return { altitude: 4.0, lat: 39.8283, lng: -98.5795 };
+                } else if (window.innerWidth < 360) {
+                    return { altitude: 3.8, lat: 39.8283, lng: -98.5795 };
+                } else if (window.innerWidth < 480) {
+                    return { altitude: 3.5, lat: 39.8283, lng: -98.5795 };
+                } else if (window.innerWidth < 768) {
+                    return { altitude: 3.0, lat: 39.8283, lng: -98.5795 };
+                } else if (window.innerWidth < 900) {
+                    return { altitude: 2.5, lat: 39.8283, lng: -98.5795 };
+                } else {
+                    return { altitude: 2.0, lat: 39.8283, lng: -98.5795 };
+                }
             };
 
-            // Set initial view to center on US (after a short delay to ensure rendering)
+            // Set initial view to center on US
+            const initialSettings = getResponsiveSettings();
+            this.globe.pointOfView({
+                lat: initialSettings.lat,
+                lng: initialSettings.lng,
+                altitude: initialSettings.altitude
+            });
+
+            // Update zoom and positioning on resize
+            window.addEventListener('resize', () => {
+                const settings = getResponsiveSettings();
+                this.globe.pointOfView({
+                    lat: settings.lat,
+                    lng: settings.lng,
+                    altitude: settings.altitude
+                });
+            });
+
+            // Ensure globe is centered after initialization
             setTimeout(() => {
                 this.globe.pointOfView({
-                    lat: 39.8283,
-                    lng: -98.5795,
-                    altitude: getResponsiveAltitude()
+                    lat: initialSettings.lat,
+                    lng: initialSettings.lng,
+                    altitude: initialSettings.altitude
                 });
             }, 100);
 
-            // Update zoom on resize
-            window.addEventListener('resize', () => {
+            // Additional centering after a longer delay to ensure everything is loaded
+            setTimeout(() => {
                 this.globe.pointOfView({
-                    lat: 39.8283,
-                    lng: -98.5795,
-                    altitude: getResponsiveAltitude()
+                    lat: initialSettings.lat,
+                    lng: initialSettings.lng,
+                    altitude: initialSettings.altitude
                 });
-                // Ensure the globe canvas and camera resize to the container
-                const globeViz = document.getElementById('globeViz');
-                if (globeViz && this.globe) {
-                    this.globe.width(globeViz.offsetWidth);
-                    this.globe.height(globeViz.offsetHeight);
-                }
-            });
+            }, 500);
+
+            // Force a resize event to ensure proper centering
+            setTimeout(() => {
+                window.dispatchEvent(new Event('resize'));
+            }, 1000);
         } catch (err) {
             console.error('Error loading geographic data:', err);
             this.showError('Failed to load geographic data. Please check your internet connection.');
@@ -202,38 +211,18 @@ class WinnerGlobe {
         const pins = this.winnersData.filter(d => d.lat && d.lng).map(winner => {
             // Clone the model for each winner
             const pin = baseObject.clone();
-            pin.scale.set(1, 1, 1); // Keep visual size
+            pin.scale.set(1, 1, 1); // Reduced size by 50%
             // Tilt the pin by 30 degrees (Math.PI/6 radians) around the X axis
-            pin.rotation.x = Math.PI / 8;
+            pin.rotation.x = Math.PI / 6;
             pin.userData = { winner };
-
-            // --- Add invisible hit area ---
-            const hitRadius = 0.08; // Adjust for desired hover area (default pin is much smaller)
-            const hitGeometry = new THREE.SphereGeometry(hitRadius, 16, 16);
-            const hitMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
-            const hitSphere = new THREE.Mesh(hitGeometry, hitMaterial);
-            hitSphere.name = 'hitArea';
-            hitSphere.userData = { isHitArea: true };
-            pin.add(hitSphere);
-            // --- End invisible hit area ---
-
             return {
                 lat: winner.lat,
                 lng: winner.lng,
-                altitude: 0.01, // Closer to the globe
+                altitude: 0.02, // Closer to the globe
                 threeObject: pin,
                 winner
             };
         });
-        // Track mouse position over the globe canvas
-        this.pointerPos = { x: 0, y: 0 };
-        const globeCanvas = document.querySelector('#globeViz canvas');
-        if (globeCanvas) {
-            globeCanvas.addEventListener('mousemove', e => {
-                this.pointerPos.x = e.clientX;
-                this.pointerPos.y = e.clientY;
-            });
-        }
         this.customObjects = pins;
         this.globe
             .objectsData(this.customObjects)
@@ -242,46 +231,7 @@ class WinnerGlobe {
             .objectAltitude('altitude')
             .objectThreeObject('threeObject')
             .onObjectClick(obj => this.showWinnerDetails(obj.winner))
-            .onObjectHover(obj => this.handlePopupHover(obj));
-    }
-
-    handlePopupHover(obj) {
-        let popup = document.getElementById('winnerPopup');
-        if (!popup) {
-            popup = document.createElement('div');
-            popup.id = 'winnerPopup';
-            popup.style.position = 'fixed';
-            popup.style.zIndex = 9999;
-            popup.style.display = 'none';
-            document.body.appendChild(popup);
-        }
-        if (obj) {
-            // Fill popup with winner details
-            popup.innerHTML = `
-                <div class="winner-popup-card">
-                    <div class="winner-popup-name">${obj.winner.name}</div>
-                    <div class="winner-popup-row"><strong>Location:</strong> ${obj.winner.city}, ${obj.winner.state}</div>
-                    <div class="winner-popup-row"><strong>Year:</strong> ${obj.winner.year}</div>
-                    <div class="winner-popup-row"><strong>Prize:</strong> ${obj.winner.prize}</div>
-                    <div class="winner-popup-row"><strong>Category:</strong> ${obj.winner.category}</div>
-                </div>
-            `;
-            popup.style.display = 'block';
-            // Use last known pointer position
-            const offset = 16;
-            let x = this.pointerPos ? this.pointerPos.x : window.innerWidth / 2;
-            let y = this.pointerPos ? this.pointerPos.y + offset : window.innerHeight / 2;
-            // Prevent overflow right/bottom
-            setTimeout(() => {
-                const rect = popup.getBoundingClientRect();
-                if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 8;
-                if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 8;
-                popup.style.left = x + 'px';
-                popup.style.top = y + 'px';
-            }, 0);
-        } else {
-            popup.style.display = 'none';
-        }
+            .onObjectHover(obj => obj ? this.showWinnerDetails(obj.winner) : this.clearWinnerDetails());
     }
 
     setupFallbackPoints() {
@@ -545,18 +495,29 @@ class WinnerGlobe {
     resetView() {
         if (!this.globe) return;
         
-        // Responsive altitude based on window size
-        const getResponsiveAltitude = () => {
-            if (window.innerWidth < 500) return 1.2;
-            if (window.innerWidth < 900) return 1.0;
-            return 0.8;
+        // Responsive altitude and positioning based on window size
+        const getResponsiveSettings = () => {
+            if (window.innerWidth < 320) {
+                return { altitude: 4.0, lat: 39.8283, lng: -98.5795 };
+            } else if (window.innerWidth < 360) {
+                return { altitude: 3.8, lat: 39.8283, lng: -98.5795 };
+            } else if (window.innerWidth < 480) {
+                return { altitude: 3.5, lat: 39.8283, lng: -98.5795 };
+            } else if (window.innerWidth < 768) {
+                return { altitude: 3.0, lat: 39.8283, lng: -98.5795 };
+            } else if (window.innerWidth < 900) {
+                return { altitude: 2.5, lat: 39.8283, lng: -98.5795 };
+            } else {
+                return { altitude: 2.0, lat: 39.8283, lng: -98.5795 };
+            }
         };
         
         // Reset to US view
+        const settings = getResponsiveSettings();
         this.globe.pointOfView({
-            lat: 39.8283,
-            lng: -98.5795,
-            altitude: getResponsiveAltitude()
+            lat: settings.lat,
+            lng: settings.lng,
+            altitude: settings.altitude
         }, 1000);
         
         // Clear winner details
