@@ -104,7 +104,7 @@ class FallbackMap {
         const mapContainer = document.getElementById('globeViz');
         if (mapContainer) {
             mapContainer.innerHTML = `
-                <div style="position: relative; width: 100%; height: 600px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); border-radius: 10px; overflow: hidden;">
+                <div style="position: relative; width: 100%; height: 600px; background: #BFEFFF; border-radius: 10px; overflow: hidden;">
                     <div style="position: absolute; top: 20px; left: 20px; color: white; font-size: 18px; font-weight: bold;">
                         📍 Winner Locations (2D View)
                     </div>

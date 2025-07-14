@@ -125,10 +125,21 @@ class WinnerGlobe {
 
             // Create the globe instance
             this.globe = Globe()(globeContainer)
-                .backgroundColor('#FFFFFF')
-                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#F5F5F5' }))
+                .backgroundColor('#87CEFA') // Lighter blue ocean
+                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#87CEFA' }))
                 .polygonsData([...countries.features, ...states.features])
-                .polygonCapColor(feat => feat.properties.hasOwnProperty('name') ? 'rgba(0, 0, 0, 0)' : '#B41F27')
+                .polygonCapColor(feat => {
+                    // US country polygon
+                    if (feat.properties.ADMIN === 'United States of America') {
+                        return '#FF7F7F'; // Light red for US
+                    }
+                    // US states (from states.geojson) - make transparent
+                    if (feat.properties.hasOwnProperty('name') && !feat.properties.ADMIN) {
+                        return 'rgba(0,0,0,0)'; // Transparent for US states
+                    }
+                    // Other countries
+                    return '#808080'; // Gray
+                })
                 .polygonSideColor(() => '#000000')
                 .polygonAltitude(feat => feat.properties.hasOwnProperty('name') ? 0.006 : 0.005)
                 .enablePointerInteraction(true);
@@ -211,6 +222,11 @@ class WinnerGlobe {
         const pins = this.winnersData.filter(d => d.lat && d.lng).map(winner => {
             // Clone the model for each winner
             const pin = baseObject.clone();
+            pin.traverse(child => {
+                if (child.material) {
+                    child.material = child.material.clone();
+                }
+            });
             pin.scale.set(1, 1, 1); // Reduced size by 50%
             // Tilt the pin by 30 degrees (Math.PI/6 radians) around the X axis
             pin.rotation.x = Math.PI / 6;
@@ -218,7 +234,7 @@ class WinnerGlobe {
             return {
                 lat: winner.lat,
                 lng: winner.lng,
-                altitude: 0.02, // Closer to the globe
+                altitude: 0.01, // Closer to the globe
                 threeObject: pin,
                 winner
             };
@@ -231,7 +247,45 @@ class WinnerGlobe {
             .objectAltitude('altitude')
             .objectThreeObject('threeObject')
             .onObjectClick(obj => this.showWinnerDetails(obj.winner))
-            .onObjectHover(obj => obj ? this.showWinnerDetails(obj.winner) : this.clearWinnerDetails());
+            .onObjectHover((obj, prevObj) => {
+                // Restore previous pin opacity if any
+                if (prevObj && prevObj.threeObject) {
+                    prevObj.threeObject.traverse(child => {
+                        if (child.material && child.material.transparent !== undefined) {
+                            child.material.transparent = true;
+                            child.material.opacity = 1;
+                        }
+                    });
+                }
+                // Make pin semi-transparent and show popup if hovering
+                if (obj && obj.threeObject) {
+                    obj.threeObject.traverse(child => {
+                        if (child.material && child.material.transparent !== undefined) {
+                            child.material.transparent = true;
+                            child.material.opacity = 0.3;
+                        }
+                    });
+                    this.showWinnerPopup(obj.winner);
+                } else {
+                    this.hideWinnerPopup();
+                }
+            });
+
+        // Track mouse for popup position
+        if (!this._popupMouseMoveHandler) {
+            this._popupMouseMoveHandler = (e) => {
+                const popup = document.getElementById('winner-popup');
+                if (popup && popup.style.display !== 'none') {
+                    const popupWidth = popup.offsetWidth;
+                    // Center horizontally below cursor, 24px below for cone
+                    popup.style.left = (e.clientX - popupWidth / 2) + 'px';
+                    popup.style.top = (e.clientY + 24) + 'px';
+                    // Cone should point to the center
+                    popup.style.setProperty('--pointer-x', (popupWidth / 2) + 'px');
+                }
+            };
+            window.addEventListener('mousemove', this._popupMouseMoveHandler);
+        }
     }
 
     setupFallbackPoints() {
@@ -355,6 +409,28 @@ class WinnerGlobe {
         const panel = document.getElementById('selectedWinner');
         if (panel) {
             panel.innerHTML = '<p>Hover over a pin to see winner details</p>';
+        }
+    }
+
+    showWinnerPopup(winner) {
+        const popup = document.getElementById('winner-popup');
+        if (popup) {
+            popup.innerHTML = `
+                <div class="winner-popup-content">
+                    <strong>${winner.name}</strong><br/>
+                    <span>${winner.city}, ${winner.state}</span><br/>
+                    <span>${winner.year} - ${winner.prize}</span><br/>
+                    <span>Category: ${winner.category}</span>
+                </div>
+            `;
+            popup.style.display = 'block';
+        }
+    }
+
+    hideWinnerPopup() {
+        const popup = document.getElementById('winner-popup');
+        if (popup) {
+            popup.style.display = 'none';
         }
     }
 

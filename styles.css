@@ -88,16 +88,19 @@ body {
 /* Globe Container */
 .globe-container {
     position: relative;
-    background: white;
     border-radius: 20px;
     overflow: hidden;
     box-shadow: 0 20px 40px rgba(0,0,0,0.1);
     width: 100%;
     max-width: 700px;
+    min-width: 220px;
     margin: 0 auto;
     aspect-ratio: 1/1;
-    min-height: 400px;
+    min-height: 220px;
+    height: 60vw;
+    max-height: 80vh;
     display: block;
+    background: transparent;
 }
 
 #globeViz {
@@ -107,6 +110,7 @@ body {
     margin: 0 auto;
     display: block;
     overflow: visible;
+    background: linear-gradient(135deg, #232526 0%, #414345 50%, #bdbdbd 100%) !important;
 }
 
 #globeViz canvas {
@@ -497,4 +501,70 @@ body {
     .globe-container {
         min-height: 400px;
     }
+} 
+
+#winner-popup {
+  width: 220px;
+  min-width: 220px;
+  max-width: 220px;
+  background: rgba(40, 40, 40, 0.97);
+  color: #fff;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+  padding: 18px 22px;
+  font-size: 1rem;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  opacity: 0.98;
+  line-height: 1.5;
+  position: fixed;
+  z-index: 2000;
+  animation: popup-fade-slide-in 0.35s cubic-bezier(0.23, 1, 0.32, 1);
+  word-break: break-word;
+}
+
+.winner-popup-content {
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+@keyframes popup-fade-slide-in {
+  0% {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1.03);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+  }
+  100% {
+    opacity: 0.98;
+    transform: translateY(0) scale(1);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+  }
+}
+
+#winner-popup:before {
+  content: '';
+  position: absolute;
+  top: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 102px solid transparent;
+  border-right: 102px solid transparent;
+  border-bottom: 24px solid rgba(40, 40, 40, 0.97);
+  animation: pointer-fade-in 0.35s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes pointer-fade-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
 } 
