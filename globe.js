@@ -17,7 +17,7 @@ class WinnerGlobe {
         this.useInstancedRendering = !this.isMobile; // Disable for mobile
         this.enableShadows = !this.isMobile;
         this.enableAntialiasing = !this.isMobile;
-        this.renderScale = this.isMobile ? 0.75 : 1.0; // Lower resolution on mobile
+        this.renderScale = this.isMobile ? 1.0 : 1.0; // Lower resolution on mobile
         
         // Cache frequently accessed DOM elements
         this.domCache = new Map();
