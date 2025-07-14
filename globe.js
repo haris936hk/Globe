@@ -507,6 +507,68 @@ class WinnerGlobe {
                 e.target.classList.add('active');
             });
         });
+
+        // --- Touch gesture support for mobile ---
+        const globeContainer = document.getElementById('globeViz');
+        let lastTouchEnd = 0;
+        let lastTap = 0;
+        let pinchStartDist = null;
+        let pinchStartAltitude = null;
+        let pinchOngoing = false;
+
+        // Helper to get distance between two touches
+        function getTouchDist(e) {
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        // Pinch-to-zoom
+        globeContainer.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                pinchStartDist = getTouchDist(e);
+                pinchStartAltitude = this.globe.pointOfView().altitude;
+                pinchOngoing = true;
+            }
+        }, { passive: false });
+
+        globeContainer.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && pinchOngoing) {
+                e.preventDefault(); // Prevent page scroll
+                const newDist = getTouchDist(e);
+                const scale = pinchStartDist ? newDist / pinchStartDist : 1;
+                let newAltitude = pinchStartAltitude / scale;
+                // Clamp altitude
+                newAltitude = Math.max(0.5, Math.min(8, newAltitude));
+                this.globe.pointOfView({ altitude: newAltitude });
+            }
+        }, { passive: false });
+
+        globeContainer.addEventListener('touchend', (e) => {
+            if (e.touches.length < 2) {
+                pinchOngoing = false;
+                pinchStartDist = null;
+                pinchStartAltitude = null;
+            }
+        });
+
+        // Double-tap to reset view
+        globeContainer.addEventListener('touchend', (e) => {
+            const now = Date.now();
+            if (e.touches.length === 0) {
+                if (now - lastTap < 350) {
+                    this.resetView();
+                    lastTap = 0;
+                } else {
+                    lastTap = now;
+                }
+            }
+        });
+
+        // Prevent double-tap zoom and unwanted gestures
+        globeContainer.addEventListener('gesturestart', e => e.preventDefault());
+        globeContainer.addEventListener('gesturechange', e => e.preventDefault());
+        globeContainer.addEventListener('gestureend', e => e.preventDefault());
     }
 
     toggleAutoRotate() {

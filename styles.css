@@ -163,20 +163,25 @@ body {
     z-index: 1000;
     flex-wrap: wrap;
     justify-content: center;
+    touch-action: manipulation;
 }
 
 .control-btn {
     background: rgba(255,255,255,0.9);
     border: none;
-    padding: 12px 16px;
-    border-radius: 25px;
+    padding: 16px 22px;
+    border-radius: 28px;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 1.1rem;
     font-weight: 500;
     transition: all 0.3s ease;
     box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     backdrop-filter: blur(10px);
     white-space: nowrap;
+    min-width: 48px;
+    min-height: 48px;
+    user-select: none;
+    -webkit-tap-highlight-color: rgba(102,126,234,0.15);
 }
 
 .control-btn:hover {
@@ -318,13 +323,15 @@ body {
     
     .controls {
         bottom: 10px;
-        gap: 8px;
+        gap: 12px;
         padding: 0 10px;
     }
     
     .control-btn {
-        padding: 10px 12px;
-        font-size: 0.8rem;
+        padding: 14px 18px;
+        font-size: 1rem;
+        min-width: 44px;
+        min-height: 44px;
     }
     
     #globeViz {
@@ -366,12 +373,14 @@ body {
     
     .controls {
         bottom: 5px;
-        gap: 5px;
+        gap: 8px;
     }
     
     .control-btn {
-        padding: 8px 10px;
-        font-size: 0.75rem;
+        padding: 12px 14px;
+        font-size: 0.95rem;
+        min-width: 40px;
+        min-height: 40px;
     }
     
     #globeViz {
