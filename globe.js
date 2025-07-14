@@ -243,7 +243,7 @@ class WinnerGlobe {
             // Initialize globe with performance optimizations
             this.globe = Globe({
                 rendererConfig: {
-                    antialias: window.devicePixelRatio < 2, // Disable antialiasing on high DPI
+                    antialias: true, // Disable antialiasing on high DPI
                     alpha: false, // Disable transparency for better performance
                     powerPreference: "high-performance"
                 }
