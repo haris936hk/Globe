@@ -1,5 +1,5 @@
-// Globe.js - Mobile Performance Optimized Interactive 3D Globe
-// Optimized for mobile devices with aggressive performance improvements
+// Globe.js - Performance Optimized Interactive 3D Globe
+// Cleaned version with unused code removed
 
 class WinnerGlobe {
     constructor() {
@@ -7,36 +7,21 @@ class WinnerGlobe {
         this.winnersData = [];
         this.filteredData = [];
         this.customObjects = [];
-        this.objectPool = new Map();
+        this.objectPool = new Map(); // Object pooling for pins
         this.lastUpdateTime = 0;
-        this.updateThrottle = 33; // 30fps for mobile
+        this.updateThrottle = 16; // ~60fps
         
-        // Mobile-specific performance settings
-        this.isMobile = this.detectMobile();
-        this.maxVisiblePins = this.isMobile ? 25 : 100; // Much lower for mobile
-        this.useInstancedRendering = !this.isMobile; // Disable for mobile
-        this.enableShadows = !this.isMobile;
-        this.enableAntialiasing = !this.isMobile;
-        this.renderScale = this.isMobile ? 1.0 : 1.0; // Lower resolution on mobile
+        // Performance settings
+        this.maxVisiblePins = 100; // Limit visible pins for performance
+        this.useInstancedRendering = true;
         
         // Cache frequently accessed DOM elements
         this.domCache = new Map();
         
-        // More aggressive debouncing for mobile
-        this.debouncedFilter = this.debounce(this.performFilter.bind(this), this.isMobile ? 300 : 100);
-        
-        // Mobile-specific optimizations
-        this.frameSkipCount = 0;
-        this.frameSkipInterval = this.isMobile ? 2 : 1; // Skip every 2nd frame on mobile
+        // Debounced functions
+        this.debouncedFilter = this.debounce(this.performFilter.bind(this), 100);
         
         this.init();
-    }
-
-    // Mobile detection
-    detectMobile() {
-        return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-               (navigator.maxTouchPoints && navigator.maxTouchPoints > 2) ||
-               window.innerWidth < 768;
     }
 
     // Utility: Debounce function
@@ -66,11 +51,7 @@ class WinnerGlobe {
             
             // Load data and initialize in parallel where possible
             await this.loadWinnerData();
-            
-            // Skip 3D model loading on mobile for better performance
-            if (!this.isMobile) {
-                await this.preloadAssets();
-            }
+            await this.preloadAssets();
             
             await this.initGlobe();
             this.setupEventListeners();
@@ -87,31 +68,25 @@ class WinnerGlobe {
     }
 
     async preloadAssets() {
-        // Skip 3D model loading on mobile
-        if (this.isMobile) {
-            this.useSimplePins = true;
-            this.initializeObjectPool();
-            return;
-        }
-        
-        // Load 3D models only on desktop
+        // Preload 3D models and textures to avoid loading delays
         const loader = new THREE.GLTFLoader();
         try {
             const gltf = await new Promise((resolve, reject) => {
                 loader.load('assets/Archive/location tag.gltf', resolve, undefined, reject);
             });
             this.baseModel = gltf.scene.children[0];
+            
+            // Pre-create a pool of pin objects
             this.initializeObjectPool();
         } catch (error) {
             console.warn('Could not preload 3D model, falling back to simple pins');
             this.useSimplePins = true;
-            this.initializeObjectPool();
         }
     }
 
     initializeObjectPool() {
-        // Smaller pool for mobile
-        const poolSize = Math.min(this.maxVisiblePins, this.isMobile ? 25 : 50);
+        // Create a pool of reusable pin objects
+        const poolSize = Math.min(this.maxVisiblePins, 50);
         for (let i = 0; i < poolSize; i++) {
             const pin = this.createPinObject();
             this.objectPool.set(i, { object: pin, inUse: false });
@@ -119,41 +94,21 @@ class WinnerGlobe {
     }
 
     createPinObject() {
-        if (this.baseModel && !this.isMobile) {
+        if (this.baseModel) {
             const pin = this.baseModel.clone();
             pin.traverse(child => {
                 if (child.material) {
                     child.material = child.material.clone();
-                    // Disable shadows on mobile
-                    if (this.isMobile) {
-                        child.castShadow = false;
-                        child.receiveShadow = false;
-                    }
                 }
             });
-            // Smaller scale for mobile
-            const scale = this.isMobile ? 0.6 : 0.8;
-            pin.scale.set(scale, scale, scale);
+            pin.scale.set(0.8, 0.8, 0.8); // Slightly smaller for better performance
             pin.rotation.x = Math.PI / 6;
             return pin;
         } else {
-            // Use very simple geometry for mobile
-            const geometry = this.isMobile 
-                ? new THREE.ConeGeometry(0.015, 0.08, 6) // Fewer segments on mobile
-                : new THREE.ConeGeometry(0.02, 0.1, 8);
-            
-            const material = new THREE.MeshBasicMaterial({ 
-                color: 0xff0000,
-                // Use MeshBasicMaterial on mobile (no lighting calculations)
-                transparent: false
-            });
-            
-            const mesh = new THREE.Mesh(geometry, material);
-            if (this.isMobile) {
-                mesh.castShadow = false;
-                mesh.receiveShadow = false;
-            }
-            return mesh;
+            // Fallback to simple geometric pin
+            const geometry = new THREE.ConeGeometry(0.02, 0.1, 8);
+            const material = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+            return new THREE.Mesh(geometry, material);
         }
     }
 
@@ -164,7 +119,7 @@ class WinnerGlobe {
                 return { key, object: item.object };
             }
         }
-        // If pool is exhausted, create new object
+        // If pool is exhausted, create new object (shouldn't happen often)
         const pin = this.createPinObject();
         const key = this.objectPool.size;
         this.objectPool.set(key, { object: pin, inUse: true });
@@ -208,13 +163,14 @@ class WinnerGlobe {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             this.winnersData = await response.json();
-            this.filteredData = [...this.winnersData];
+            this.filteredData = [...this.winnersData]; // Initial filtered data
             
             // Pre-process data for better performance
             this.preprocessData();
             
         } catch (error) {
             console.error('Error loading winner data:', error);
+            // If data loading fails, show error instead of sample data
             throw error;
         }
     }
@@ -226,72 +182,45 @@ class WinnerGlobe {
             winner.hasValidCoords = !!(winner.lat && winner.lng);
         });
         
-        // Sort by priority
+        // Sort by priority (can be customized)
         this.winnersData.sort((a, b) => b.year - a.year);
     }
 
     async initGlobe() {
         try {
-            // Load geographic data with reduced complexity for mobile
+            // Load geographic data efficiently
             const [countries, states] = await Promise.all([
                 this.loadGeographicData('countries'),
-                this.isMobile ? { features: [] } : this.loadGeographicData('states') // Skip states on mobile
+                this.loadGeographicData('states')
             ]);
             
             const globeContainer = this.getDOMElement('globeViz');
             
-            // Mobile-optimized renderer configuration
-            const rendererConfig = {
-                antialias: this.enableAntialiasing,
-                alpha: false,
-                powerPreference: "high-performance",
-                precision: this.isMobile ? "mediump" : "highp",
-                stencil: false,
-                depth: true,
-                logarithmicDepthBuffer: false
-            };
-            
-            // Initialize globe with mobile optimizations
+            // Initialize globe with performance optimizations
             this.globe = Globe({
-                rendererConfig,
-                animateIn: !this.isMobile // Disable entrance animation on mobile
+                rendererConfig: {
+                    antialias: true,
+                    alpha: false, // Disable transparency for better performance
+                    powerPreference: "high-performance"
+                }
             })(globeContainer)
                 .backgroundColor('#d4dfed')
-                .globeMaterial(new THREE.MeshBasicMaterial({ 
-                    color: '#87CEFA',
-                    transparent: false
-                }))
-                .polygonsData(this.isMobile ? countries.features : [...countries.features, ...states.features])
+                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#87CEFA' }))
+                .polygonsData([...countries.features, ...states.features])
                 .polygonCapColor(this.getPolygonColor.bind(this))
                 .polygonSideColor(() => '#000000')
-                .polygonAltitude(feat => feat.properties.hasOwnProperty('name') ? 0.004 : 0.003) // Lower altitude on mobile
+                .polygonAltitude(feat => feat.properties.hasOwnProperty('name') ? 0.006 : 0.005)
                 .enablePointerInteraction(true);
 
-            // Mobile-specific settings
-            if (this.isMobile) {
-                // Disable auto-rotation and other performance-heavy features
-                this.globe
-                    .atmosphereColor('#ffffff')
-                    .atmosphereAltitude(0.1); // Lower atmosphere for mobile
-            }
-
-            // Set up optimized custom objects with frame skipping
+            // Set up optimized custom objects
             await this.setupOptimizedObjects();
             
             // Set initial view
             this.globe.pointOfView({
                 lat: 39.8283,
                 lng: -98.5795,
-                altitude: this.isMobile ? 2.5 : 2.0 // Higher altitude on mobile for better performance
+                altitude: 2.0
             });
-            
-            // Mobile-specific renderer optimizations
-            if (this.isMobile) {
-                const renderer = this.globe.renderer();
-                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-                renderer.shadowMap.enabled = false;
-                renderer.precision = "mediump";
-            }
             
         } catch (err) {
             console.error('Error loading geographic data:', err);
@@ -310,7 +239,7 @@ class WinnerGlobe {
     }
 
     getPolygonColor(feat) {
-        // Simplified polygon coloring for mobile
+        // Optimized polygon coloring
         if (feat.properties.ADMIN === 'United States of America') {
             return '#FF7F7F';
         }
@@ -321,7 +250,7 @@ class WinnerGlobe {
     }
 
     async setupOptimizedObjects() {
-        // Significantly limit visible pins for mobile
+        // Limit visible pins for performance
         const visibleWinners = this.filteredData
             .filter(d => d.hasValidCoords)
             .slice(0, this.maxVisiblePins);
@@ -346,7 +275,7 @@ class WinnerGlobe {
             return {
                 lat: winner.lat,
                 lng: winner.lng,
-                altitude: 0.008, // Lower altitude for mobile
+                altitude: 0.01,
                 threeObject: pin,
                 winner
             };
@@ -363,19 +292,11 @@ class WinnerGlobe {
             .onObjectClick(obj => this.showWinnerDetails(obj.winner))
             .onObjectHover(this.throttledHover.bind(this));
 
-        // Optimized mouse tracking with frame skipping
+        // Optimized mouse tracking
         this.setupOptimizedMouseTracking();
     }
 
     throttledHover(obj, prevObj) {
-        // Skip frames on mobile for better performance
-        if (this.isMobile) {
-            this.frameSkipCount++;
-            if (this.frameSkipCount % this.frameSkipInterval !== 0) {
-                return;
-            }
-        }
-        
         const now = Date.now();
         if (now - this.lastUpdateTime < this.updateThrottle) {
             return;
@@ -386,13 +307,8 @@ class WinnerGlobe {
     }
 
     handleObjectHover(obj, prevObj) {
-        // Batch DOM updates with requestAnimationFrame
-        if (this.hoverUpdatePending) return;
-        this.hoverUpdatePending = true;
-        
+        // Batch DOM updates
         requestAnimationFrame(() => {
-            this.hoverUpdatePending = false;
-            
             if (prevObj && prevObj.threeObject) {
                 this.resetPinOpacity(prevObj.threeObject);
             }
@@ -411,7 +327,6 @@ class WinnerGlobe {
             if (child.material) {
                 child.material.transparent = true;
                 child.material.opacity = opacity;
-                child.material.needsUpdate = true;
             }
         });
     }
@@ -421,16 +336,12 @@ class WinnerGlobe {
             if (child.material) {
                 child.material.transparent = false;
                 child.material.opacity = 1;
-                child.material.needsUpdate = true;
             }
         });
     }
 
     setupOptimizedMouseTracking() {
         if (!this._popupMouseMoveHandler) {
-            // More aggressive throttling for mobile
-            const throttleMs = this.isMobile ? 50 : 16;
-            
             this._popupMouseMoveHandler = this.throttle((e) => {
                 const popup = this.getDOMElement('winner-popup');
                 if (popup && popup.style.display !== 'none') {
@@ -439,7 +350,7 @@ class WinnerGlobe {
                     popup.style.top = (e.clientY + 24) + 'px';
                     popup.style.setProperty('--pointer-x', (popupWidth / 2) + 'px');
                 }
-            }, throttleMs);
+            }, 16); // ~60fps
             
             window.addEventListener('mousemove', this._popupMouseMoveHandler, { passive: true });
         }
@@ -473,6 +384,7 @@ class WinnerGlobe {
     showWinnerDetails(winner) {
         const panel = this.getDOMElement('selectedWinner');
         if (panel) {
+            // Use template literals for better performance
             panel.innerHTML = `
                 <div class="winner-details">
                     <div class="winner-detail"><strong>Name:</strong> ${winner.name}</div>
@@ -511,7 +423,7 @@ class WinnerGlobe {
         // Use event delegation for better performance
         document.addEventListener('click', this.handleGlobalClick.bind(this));
         
-        // Handle filter buttons with mobile optimization
+        // Handle filter buttons
         document.querySelectorAll('.filter-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const category = e.target.dataset.category;
@@ -529,6 +441,7 @@ class WinnerGlobe {
         const target = e.target;
         const id = target.id;
         
+        // Only handle reset view button since it's the only one still needed
         if (id === 'resetViewBtn') {
             this.resetView();
         }
@@ -540,8 +453,8 @@ class WinnerGlobe {
         this.globe.pointOfView({
             lat: 39.8283,
             lng: -98.5795,
-            altitude: this.isMobile ? 2.5 : 2.0
-        }, this.isMobile ? 2000 : 1000); // Slower animation on mobile
+            altitude: 2.0
+        }, 1000);
         
         this.clearWinnerDetails();
     }
@@ -601,7 +514,7 @@ class WinnerGlobe {
             return {
                 lat: winner.lat,
                 lng: winner.lng,
-                altitude: 0.008,
+                altitude: 0.01,
                 threeObject: pin,
                 winner
             };
@@ -612,13 +525,8 @@ class WinnerGlobe {
     }
 
     updateStats() {
-        // More aggressive batching for mobile
-        if (this.statsUpdatePending) return;
-        this.statsUpdatePending = true;
-        
+        // Batch DOM updates
         requestAnimationFrame(() => {
-            this.statsUpdatePending = false;
-            
             const totalWinnersEl = this.getDOMElement('totalWinners');
             if (totalWinnersEl) {
                 totalWinnersEl.textContent = this.filteredData.length;
@@ -639,7 +547,7 @@ class WinnerGlobe {
     }
 
     startPerformanceMonitoring() {
-        // More aggressive performance monitoring for mobile
+        // Optional: Monitor performance and adjust settings
         let frameCount = 0;
         let lastTime = performance.now();
         
@@ -652,21 +560,10 @@ class WinnerGlobe {
                 frameCount = 0;
                 lastTime = currentTime;
                 
-                // More aggressive adjustments for mobile
-                if (this.isMobile) {
-                    if (fps < 20 && this.maxVisiblePins > 10) {
-                        this.maxVisiblePins = Math.max(10, this.maxVisiblePins - 5);
-                        console.log(`Reduced max visible pins to ${this.maxVisiblePins} due to low FPS on mobile`);
-                    }
-                    if (fps < 15) {
-                        this.frameSkipInterval = Math.min(4, this.frameSkipInterval + 1);
-                        console.log(`Increased frame skip interval to ${this.frameSkipInterval}`);
-                    }
-                } else {
-                    if (fps < 30 && this.maxVisiblePins > 25) {
-                        this.maxVisiblePins = Math.max(25, this.maxVisiblePins - 10);
-                        console.log(`Reduced max visible pins to ${this.maxVisiblePins} due to low FPS`);
-                    }
+                // Adjust quality based on FPS
+                if (fps < 30 && this.maxVisiblePins > 25) {
+                    this.maxVisiblePins = Math.max(25, this.maxVisiblePins - 10);
+                    console.log(`Reduced max visible pins to ${this.maxVisiblePins} due to low FPS`);
                 }
             }
             
@@ -691,7 +588,7 @@ class WinnerGlobe {
     }
 }
 
-// Optimized initialization with mobile considerations
+// Optimized initialization
 function initializeGlobe() {
     if (typeof Globe === 'undefined') {
         console.error('Globe.gl library not loaded');
