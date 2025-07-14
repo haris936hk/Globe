@@ -1,33 +1,42 @@
-// Globe.js - Performance Optimized Interactive 3D Globe
-// Key optimizations: Object pooling, efficient animations, reduced DOM manipulation, lazy loading
+// Globe.js - Mobile Performance Optimized Interactive 3D Globe
+// Optimized for mobile devices with aggressive performance improvements
 
 class WinnerGlobe {
     constructor() {
         this.globe = null;
         this.winnersData = [];
         this.filteredData = [];
-        this.isAutoRotating = false;
-        this.animationSpeed = 0.5;
-        this.animationId = null;
-        this.startTime = Date.now();
         this.customObjects = [];
-        this.objectPool = new Map(); // Object pooling for pins
+        this.objectPool = new Map();
         this.lastUpdateTime = 0;
-        this.updateThrottle = 16; // ~60fps
+        this.updateThrottle = 33; // 30fps for mobile
         
-        // Performance settings
-        this.maxVisiblePins = 100; // Limit visible pins for performance
-        this.lodDistance = 5; // Level of detail distance threshold
-        this.useInstancedRendering = true;
+        // Mobile-specific performance settings
+        this.isMobile = this.detectMobile();
+        this.maxVisiblePins = this.isMobile ? 25 : 100; // Much lower for mobile
+        this.useInstancedRendering = !this.isMobile; // Disable for mobile
+        this.enableShadows = !this.isMobile;
+        this.enableAntialiasing = !this.isMobile;
+        this.renderScale = this.isMobile ? 0.75 : 1.0; // Lower resolution on mobile
         
         // Cache frequently accessed DOM elements
         this.domCache = new Map();
         
-        // Debounced functions
-        this.debouncedResize = this.debounce(this.handleResize.bind(this), 250);
-        this.debouncedFilter = this.debounce(this.performFilter.bind(this), 100);
+        // More aggressive debouncing for mobile
+        this.debouncedFilter = this.debounce(this.performFilter.bind(this), this.isMobile ? 300 : 100);
+        
+        // Mobile-specific optimizations
+        this.frameSkipCount = 0;
+        this.frameSkipInterval = this.isMobile ? 2 : 1; // Skip every 2nd frame on mobile
         
         this.init();
+    }
+
+    // Mobile detection
+    detectMobile() {
+        return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+               (navigator.maxTouchPoints && navigator.maxTouchPoints > 2) ||
+               window.innerWidth < 768;
     }
 
     // Utility: Debounce function
@@ -56,10 +65,12 @@ class WinnerGlobe {
             this.showLoading();
             
             // Load data and initialize in parallel where possible
-            const [winnersData] = await Promise.all([
-                this.loadWinnerData(),
-                this.preloadAssets() // Preload 3D models
-            ]);
+            await this.loadWinnerData();
+            
+            // Skip 3D model loading on mobile for better performance
+            if (!this.isMobile) {
+                await this.preloadAssets();
+            }
             
             await this.initGlobe();
             this.setupEventListeners();
@@ -76,25 +87,31 @@ class WinnerGlobe {
     }
 
     async preloadAssets() {
-        // Preload 3D models and textures to avoid loading delays
+        // Skip 3D model loading on mobile
+        if (this.isMobile) {
+            this.useSimplePins = true;
+            this.initializeObjectPool();
+            return;
+        }
+        
+        // Load 3D models only on desktop
         const loader = new THREE.GLTFLoader();
         try {
             const gltf = await new Promise((resolve, reject) => {
                 loader.load('assets/Archive/location tag.gltf', resolve, undefined, reject);
             });
             this.baseModel = gltf.scene.children[0];
-            
-            // Pre-create a pool of pin objects
             this.initializeObjectPool();
         } catch (error) {
             console.warn('Could not preload 3D model, falling back to simple pins');
             this.useSimplePins = true;
+            this.initializeObjectPool();
         }
     }
 
     initializeObjectPool() {
-        // Create a pool of reusable pin objects
-        const poolSize = Math.min(this.maxVisiblePins, 50);
+        // Smaller pool for mobile
+        const poolSize = Math.min(this.maxVisiblePins, this.isMobile ? 25 : 50);
         for (let i = 0; i < poolSize; i++) {
             const pin = this.createPinObject();
             this.objectPool.set(i, { object: pin, inUse: false });
@@ -102,21 +119,41 @@ class WinnerGlobe {
     }
 
     createPinObject() {
-        if (this.baseModel) {
+        if (this.baseModel && !this.isMobile) {
             const pin = this.baseModel.clone();
             pin.traverse(child => {
                 if (child.material) {
                     child.material = child.material.clone();
+                    // Disable shadows on mobile
+                    if (this.isMobile) {
+                        child.castShadow = false;
+                        child.receiveShadow = false;
+                    }
                 }
             });
-            pin.scale.set(0.8, 0.8, 0.8); // Slightly smaller for better performance
+            // Smaller scale for mobile
+            const scale = this.isMobile ? 0.6 : 0.8;
+            pin.scale.set(scale, scale, scale);
             pin.rotation.x = Math.PI / 6;
             return pin;
         } else {
-            // Fallback to simple geometric pin
-            const geometry = new THREE.ConeGeometry(0.02, 0.1, 8);
-            const material = new THREE.MeshPhongMaterial({ color: 0xff0000 });
-            return new THREE.Mesh(geometry, material);
+            // Use very simple geometry for mobile
+            const geometry = this.isMobile 
+                ? new THREE.ConeGeometry(0.015, 0.08, 6) // Fewer segments on mobile
+                : new THREE.ConeGeometry(0.02, 0.1, 8);
+            
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0xff0000,
+                // Use MeshBasicMaterial on mobile (no lighting calculations)
+                transparent: false
+            });
+            
+            const mesh = new THREE.Mesh(geometry, material);
+            if (this.isMobile) {
+                mesh.castShadow = false;
+                mesh.receiveShadow = false;
+            }
+            return mesh;
         }
     }
 
@@ -127,7 +164,7 @@ class WinnerGlobe {
                 return { key, object: item.object };
             }
         }
-        // If pool is exhausted, create new object (shouldn't happen often)
+        // If pool is exhausted, create new object
         const pin = this.createPinObject();
         const key = this.objectPool.size;
         this.objectPool.set(key, { object: pin, inUse: true });
@@ -171,16 +208,14 @@ class WinnerGlobe {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             this.winnersData = await response.json();
-            this.filteredData = [...this.winnersData]; // Initial filtered data
+            this.filteredData = [...this.winnersData];
             
             // Pre-process data for better performance
             this.preprocessData();
             
         } catch (error) {
             console.error('Error loading winner data:', error);
-            this.winnersData = this.getSampleData();
-            this.filteredData = [...this.winnersData];
-            this.preprocessData();
+            throw error;
         }
     }
 
@@ -191,82 +226,72 @@ class WinnerGlobe {
             winner.hasValidCoords = !!(winner.lat && winner.lng);
         });
         
-        // Sort by priority (can be customized)
+        // Sort by priority
         this.winnersData.sort((a, b) => b.year - a.year);
-    }
-
-    getSampleData() {
-        return [
-            {
-                "name": "John Doe",
-                "city": "Dallas",
-                "state": "TX",
-                "lat": 32.7767,
-                "lng": -96.7970,
-                "year": 2023,
-                "prize": "$50,000",
-                "category": "Innovation"
-            },
-            {
-                "name": "Jane Smith",
-                "city": "Denver",
-                "state": "CO",
-                "lat": 39.7392,
-                "lng": -104.9903,
-                "year": 2023,
-                "prize": "$25,000",
-                "category": "Community Impact"
-            },
-            {
-                "name": "Bob Johnson",
-                "city": "Miami",
-                "state": "FL",
-                "lat": 25.7617,
-                "lng": -80.1918,
-                "year": 2023,
-                "prize": "$30,000",
-                "category": "Leadership"
-            }
-        ];
     }
 
     async initGlobe() {
         try {
-            // Load geographic data efficiently
+            // Load geographic data with reduced complexity for mobile
             const [countries, states] = await Promise.all([
                 this.loadGeographicData('countries'),
-                this.loadGeographicData('states')
+                this.isMobile ? { features: [] } : this.loadGeographicData('states') // Skip states on mobile
             ]);
             
             const globeContainer = this.getDOMElement('globeViz');
             
-            // Initialize globe with performance optimizations
+            // Mobile-optimized renderer configuration
+            const rendererConfig = {
+                antialias: this.enableAntialiasing,
+                alpha: false,
+                powerPreference: "high-performance",
+                precision: this.isMobile ? "mediump" : "highp",
+                stencil: false,
+                depth: true,
+                logarithmicDepthBuffer: false
+            };
+            
+            // Initialize globe with mobile optimizations
             this.globe = Globe({
-                rendererConfig: {
-                    antialias: true, // Disable antialiasing on high DPI
-                    alpha: false, // Disable transparency for better performance
-                    powerPreference: "high-performance"
-                }
+                rendererConfig,
+                animateIn: !this.isMobile // Disable entrance animation on mobile
             })(globeContainer)
                 .backgroundColor('#d4dfed')
-                .globeMaterial(new THREE.MeshPhongMaterial({ color: '#87CEFA' }))
-                .polygonsData([...countries.features, ...states.features])
+                .globeMaterial(new THREE.MeshBasicMaterial({ 
+                    color: '#87CEFA',
+                    transparent: false
+                }))
+                .polygonsData(this.isMobile ? countries.features : [...countries.features, ...states.features])
                 .polygonCapColor(this.getPolygonColor.bind(this))
                 .polygonSideColor(() => '#000000')
-                .polygonAltitude(feat => feat.properties.hasOwnProperty('name') ? 0.006 : 0.005)
+                .polygonAltitude(feat => feat.properties.hasOwnProperty('name') ? 0.004 : 0.003) // Lower altitude on mobile
                 .enablePointerInteraction(true);
 
-            // Set up optimized custom objects
+            // Mobile-specific settings
+            if (this.isMobile) {
+                // Disable auto-rotation and other performance-heavy features
+                this.globe
+                    .atmosphereColor('#ffffff')
+                    .atmosphereAltitude(0.1); // Lower atmosphere for mobile
+            }
+
+            // Set up optimized custom objects with frame skipping
             await this.setupOptimizedObjects();
             
-            // Set initial responsive view
-            this.setResponsiveView();
+            // Set initial view
+            this.globe.pointOfView({
+                lat: 39.8283,
+                lng: -98.5795,
+                altitude: this.isMobile ? 2.5 : 2.0 // Higher altitude on mobile for better performance
+            });
             
-            // Add resize handler
-            window.addEventListener('resize', this.debouncedResize);
-            
-            // Force initial positioning
-            setTimeout(() => this.setResponsiveView(), 100);
+            // Mobile-specific renderer optimizations
+            if (this.isMobile) {
+                const renderer = this.globe.renderer();
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                renderer.shadowMap.enabled = false;
+                renderer.precision = "mediump";
+            }
             
         } catch (err) {
             console.error('Error loading geographic data:', err);
@@ -285,7 +310,7 @@ class WinnerGlobe {
     }
 
     getPolygonColor(feat) {
-        // Optimized polygon coloring
+        // Simplified polygon coloring for mobile
         if (feat.properties.ADMIN === 'United States of America') {
             return '#FF7F7F';
         }
@@ -296,7 +321,7 @@ class WinnerGlobe {
     }
 
     async setupOptimizedObjects() {
-        // Limit visible pins for performance
+        // Significantly limit visible pins for mobile
         const visibleWinners = this.filteredData
             .filter(d => d.hasValidCoords)
             .slice(0, this.maxVisiblePins);
@@ -321,7 +346,7 @@ class WinnerGlobe {
             return {
                 lat: winner.lat,
                 lng: winner.lng,
-                altitude: 0.01,
+                altitude: 0.008, // Lower altitude for mobile
                 threeObject: pin,
                 winner
             };
@@ -338,11 +363,19 @@ class WinnerGlobe {
             .onObjectClick(obj => this.showWinnerDetails(obj.winner))
             .onObjectHover(this.throttledHover.bind(this));
 
-        // Optimized mouse tracking
+        // Optimized mouse tracking with frame skipping
         this.setupOptimizedMouseTracking();
     }
 
     throttledHover(obj, prevObj) {
+        // Skip frames on mobile for better performance
+        if (this.isMobile) {
+            this.frameSkipCount++;
+            if (this.frameSkipCount % this.frameSkipInterval !== 0) {
+                return;
+            }
+        }
+        
         const now = Date.now();
         if (now - this.lastUpdateTime < this.updateThrottle) {
             return;
@@ -353,8 +386,13 @@ class WinnerGlobe {
     }
 
     handleObjectHover(obj, prevObj) {
-        // Batch DOM updates
+        // Batch DOM updates with requestAnimationFrame
+        if (this.hoverUpdatePending) return;
+        this.hoverUpdatePending = true;
+        
         requestAnimationFrame(() => {
+            this.hoverUpdatePending = false;
+            
             if (prevObj && prevObj.threeObject) {
                 this.resetPinOpacity(prevObj.threeObject);
             }
@@ -373,6 +411,7 @@ class WinnerGlobe {
             if (child.material) {
                 child.material.transparent = true;
                 child.material.opacity = opacity;
+                child.material.needsUpdate = true;
             }
         });
     }
@@ -382,12 +421,16 @@ class WinnerGlobe {
             if (child.material) {
                 child.material.transparent = false;
                 child.material.opacity = 1;
+                child.material.needsUpdate = true;
             }
         });
     }
 
     setupOptimizedMouseTracking() {
         if (!this._popupMouseMoveHandler) {
+            // More aggressive throttling for mobile
+            const throttleMs = this.isMobile ? 50 : 16;
+            
             this._popupMouseMoveHandler = this.throttle((e) => {
                 const popup = this.getDOMElement('winner-popup');
                 if (popup && popup.style.display !== 'none') {
@@ -396,7 +439,7 @@ class WinnerGlobe {
                     popup.style.top = (e.clientY + 24) + 'px';
                     popup.style.setProperty('--pointer-x', (popupWidth / 2) + 'px');
                 }
-            }, 16); // ~60fps
+            }, throttleMs);
             
             window.addEventListener('mousemove', this._popupMouseMoveHandler, { passive: true });
         }
@@ -430,7 +473,6 @@ class WinnerGlobe {
     showWinnerDetails(winner) {
         const panel = this.getDOMElement('selectedWinner');
         if (panel) {
-            // Use template literals for better performance
             panel.innerHTML = `
                 <div class="winner-details">
                     <div class="winner-detail"><strong>Name:</strong> ${winner.name}</div>
@@ -468,212 +510,47 @@ class WinnerGlobe {
     setupEventListeners() {
         // Use event delegation for better performance
         document.addEventListener('click', this.handleGlobalClick.bind(this));
-        document.addEventListener('keydown', this.handleKeydown.bind(this));
         
-        // Optimized touch handling
-        this.setupOptimizedTouchHandling();
+        // Handle filter buttons with mobile optimization
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const category = e.target.dataset.category;
+                this.filterByCategory(category);
+                
+                // Update active state efficiently
+                document.querySelectorAll('.filter-btn').forEach(button => 
+                    button.classList.remove('active'));
+                e.target.classList.add('active');
+            });
+        });
     }
 
     handleGlobalClick(e) {
         const target = e.target;
         const id = target.id;
         
-        switch(id) {
-            case 'autoRotateBtn':
-                this.toggleAutoRotate();
-                break;
-            case 'animatePinsBtn':
-                this.animatePins();
-                break;
-            case 'resetViewBtn':
-                this.resetView();
-                break;
-            case 'changePinStyleBtn':
-                this.changePinStyle();
-                break;
+        if (id === 'resetViewBtn') {
+            this.resetView();
         }
-        
-        // Handle filter buttons
-        if (target.classList.contains('filter-btn')) {
-            const category = target.dataset.category;
-            this.filterByCategory(category);
-            
-            // Update active state efficiently
-            document.querySelectorAll('.filter-btn').forEach(btn => 
-                btn.classList.remove('active'));
-            target.classList.add('active');
-        }
-    }
-
-    handleKeydown(e) {
-        if (!this.globe) return;
-        
-        const keyActions = {
-            'r': 'autoRotateBtn',
-            'R': 'autoRotateBtn',
-            'a': 'animatePinsBtn',
-            'A': 'animatePinsBtn',
-            'p': 'changePinStyleBtn',
-            'P': 'changePinStyleBtn',
-            'Escape': 'resetViewBtn'
-        };
-        
-        const buttonId = keyActions[e.key];
-        if (buttonId) {
-            const button = this.getDOMElement(buttonId);
-            if (button) button.click();
-        }
-    }
-
-    setupOptimizedTouchHandling() {
-        const globeContainer = this.getDOMElement('globeViz');
-        let pinchStartDist = null;
-        let pinchStartAltitude = null;
-        let lastTap = 0;
-
-        const getTouchDist = (e) => {
-            const dx = e.touches[0].clientX - e.touches[1].clientX;
-            const dy = e.touches[0].clientY - e.touches[1].clientY;
-            return Math.sqrt(dx * dx + dy * dy);
-        };
-
-        const throttledPinchMove = this.throttle((e) => {
-            if (e.touches.length === 2) {
-                const newDist = getTouchDist(e);
-                const scale = pinchStartDist ? newDist / pinchStartDist : 1;
-                const newAltitude = Math.max(0.5, Math.min(8, pinchStartAltitude / scale));
-                this.globe.pointOfView({ altitude: newAltitude });
-            }
-        }, 16);
-
-        globeContainer.addEventListener('touchstart', (e) => {
-            if (e.touches.length === 2) {
-                pinchStartDist = getTouchDist(e);
-                pinchStartAltitude = this.globe.pointOfView().altitude;
-            }
-        }, { passive: true });
-
-        globeContainer.addEventListener('touchmove', throttledPinchMove, { passive: false });
-
-        globeContainer.addEventListener('touchend', (e) => {
-            if (e.touches.length < 2) {
-                pinchStartDist = null;
-                pinchStartAltitude = null;
-            }
-            
-            // Double-tap detection
-            const now = Date.now();
-            if (e.touches.length === 0) {
-                if (now - lastTap < 350) {
-                    this.resetView();
-                    lastTap = 0;
-                } else {
-                    lastTap = now;
-                }
-            }
-        }, { passive: true });
-    }
-
-    setResponsiveView() {
-        const settings = this.getResponsiveSettings();
-        this.globe.pointOfView(settings);
-    }
-
-    getResponsiveSettings() {
-        const width = window.innerWidth;
-        const breakpoints = [
-            { max: 320, altitude: 4.0 },
-            { max: 360, altitude: 3.8 },
-            { max: 480, altitude: 3.5 },
-            { max: 768, altitude: 3.0 },
-            { max: 900, altitude: 2.5 },
-            { max: Infinity, altitude: 2.0 }
-        ];
-        
-        const setting = breakpoints.find(bp => width < bp.max);
-        return {
-            lat: 39.8283,
-            lng: -98.5795,
-            altitude: setting.altitude
-        };
-    }
-
-    handleResize() {
-        if (this.globe) {
-            this.setResponsiveView();
-        }
-    }
-
-    toggleAutoRotate() {
-        this.isAutoRotating = !this.isAutoRotating;
-        const button = this.getDOMElement('autoRotateBtn');
-        
-        if (this.isAutoRotating) {
-            button.textContent = '🔄 Stop Auto Rotate';
-            button.style.background = 'rgba(255, 107, 107, 0.3)';
-            this.globe.controls().autoRotate = true;
-            this.globe.controls().autoRotateSpeed = this.animationSpeed;
-        } else {
-            button.textContent = '🔄 Auto Rotate';
-            button.style.background = 'rgba(255, 255, 255, 0.2)';
-            this.globe.controls().autoRotate = false;
-        }
-    }
-
-    animatePins() {
-        if (!this.filteredData || this.filteredData.length === 0) return;
-        
-        let index = 0;
-        const animateNext = () => {
-            if (index < this.filteredData.length) {
-                const winner = this.filteredData[index];
-                
-                this.globe.pointOfView({
-                    lat: winner.lat,
-                    lng: winner.lng,
-                    altitude: 1.2
-                }, 1000);
-
-                this.showWinnerDetails(winner);
-                index++;
-                setTimeout(animateNext, 2000);
-            } else {
-                setTimeout(() => this.resetView(), 1000);
-            }
-        };
-        
-        animateNext();
     }
 
     resetView() {
         if (!this.globe) return;
         
-        const settings = this.getResponsiveSettings();
-        this.globe.pointOfView(settings, 1000);
+        this.globe.pointOfView({
+            lat: 39.8283,
+            lng: -98.5795,
+            altitude: this.isMobile ? 2.5 : 2.0
+        }, this.isMobile ? 2000 : 1000); // Slower animation on mobile
+        
         this.clearWinnerDetails();
     }
 
     clearWinnerDetails() {
         const panel = this.getDOMElement('selectedWinner');
         if (panel) {
-            panel.innerHTML = '<p>Hover over a pin to see winner details</p>';
+            panel.innerHTML = '<p>Click on a pin to see winner details</p>';
         }
-    }
-
-    changePinStyle() {
-        // Optimized pin style changing using object pool
-        const colors = ['#1A237E', '#4CAF50', '#2196F3', '#FFD700', '#9C27B0'];
-        
-        this.customObjects.forEach((obj, index) => {
-            const colorIndex = index % colors.length;
-            const color = colors[colorIndex];
-            
-            obj.threeObject.traverse(child => {
-                if (child.material) {
-                    child.material.color.setHex(parseInt(color.replace('#', ''), 16));
-                }
-            });
-        });
     }
 
     filterByCategory(category) {
@@ -724,7 +601,7 @@ class WinnerGlobe {
             return {
                 lat: winner.lat,
                 lng: winner.lng,
-                altitude: 0.01,
+                altitude: 0.008,
                 threeObject: pin,
                 winner
             };
@@ -735,8 +612,13 @@ class WinnerGlobe {
     }
 
     updateStats() {
-        // Batch DOM updates
+        // More aggressive batching for mobile
+        if (this.statsUpdatePending) return;
+        this.statsUpdatePending = true;
+        
         requestAnimationFrame(() => {
+            this.statsUpdatePending = false;
+            
             const totalWinnersEl = this.getDOMElement('totalWinners');
             if (totalWinnersEl) {
                 totalWinnersEl.textContent = this.filteredData.length;
@@ -757,7 +639,7 @@ class WinnerGlobe {
     }
 
     startPerformanceMonitoring() {
-        // Optional: Monitor performance and adjust settings
+        // More aggressive performance monitoring for mobile
         let frameCount = 0;
         let lastTime = performance.now();
         
@@ -770,10 +652,21 @@ class WinnerGlobe {
                 frameCount = 0;
                 lastTime = currentTime;
                 
-                // Adjust quality based on FPS
-                if (fps < 30 && this.maxVisiblePins > 25) {
-                    this.maxVisiblePins = Math.max(25, this.maxVisiblePins - 10);
-                    console.log(`Reduced max visible pins to ${this.maxVisiblePins} due to low FPS`);
+                // More aggressive adjustments for mobile
+                if (this.isMobile) {
+                    if (fps < 20 && this.maxVisiblePins > 10) {
+                        this.maxVisiblePins = Math.max(10, this.maxVisiblePins - 5);
+                        console.log(`Reduced max visible pins to ${this.maxVisiblePins} due to low FPS on mobile`);
+                    }
+                    if (fps < 15) {
+                        this.frameSkipInterval = Math.min(4, this.frameSkipInterval + 1);
+                        console.log(`Increased frame skip interval to ${this.frameSkipInterval}`);
+                    }
+                } else {
+                    if (fps < 30 && this.maxVisiblePins > 25) {
+                        this.maxVisiblePins = Math.max(25, this.maxVisiblePins - 10);
+                        console.log(`Reduced max visible pins to ${this.maxVisiblePins} due to low FPS`);
+                    }
                 }
             }
             
@@ -785,11 +678,6 @@ class WinnerGlobe {
 
     cleanup() {
         // Clean up resources
-        if (this.animationId) {
-            cancelAnimationFrame(this.animationId);
-        }
-        
-        window.removeEventListener('resize', this.debouncedResize);
         window.removeEventListener('mousemove', this._popupMouseMoveHandler);
         
         // Return all objects to pool
@@ -803,7 +691,7 @@ class WinnerGlobe {
     }
 }
 
-// Optimized initialization
+// Optimized initialization with mobile considerations
 function initializeGlobe() {
     if (typeof Globe === 'undefined') {
         console.error('Globe.gl library not loaded');
