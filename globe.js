@@ -1,40 +1,73 @@
-// Globe.js - Fixed Interactive 3D Globe with Winner Locations
-// Use global THREE and CustomMapPin (from UMD scripts)
+// Globe.js - Performance Optimized Interactive 3D Globe
+// Key optimizations: Object pooling, efficient animations, reduced DOM manipulation, lazy loading
 
 class WinnerGlobe {
     constructor() {
         this.globe = null;
         this.winnersData = [];
+        this.filteredData = [];
         this.isAutoRotating = false;
         this.animationSpeed = 0.5;
-        this.pinFactory = null;
         this.animationId = null;
         this.startTime = Date.now();
-        this.useCustomPins = true;
         this.customObjects = [];
+        this.objectPool = new Map(); // Object pooling for pins
+        this.lastUpdateTime = 0;
+        this.updateThrottle = 16; // ~60fps
+        
+        // Performance settings
+        this.maxVisiblePins = 100; // Limit visible pins for performance
+        this.lodDistance = 5; // Level of detail distance threshold
+        this.useInstancedRendering = true;
+        
+        // Cache frequently accessed DOM elements
+        this.domCache = new Map();
+        
+        // Debounced functions
+        this.debouncedResize = this.debounce(this.handleResize.bind(this), 250);
+        this.debouncedFilter = this.debounce(this.performFilter.bind(this), 100);
         
         this.init();
     }
 
+    // Utility: Debounce function
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    // Cache DOM elements to avoid repeated queries
+    getDOMElement(id) {
+        if (!this.domCache.has(id)) {
+            this.domCache.set(id, document.getElementById(id));
+        }
+        return this.domCache.get(id);
+    }
+
     async init() {
         try {
-            // Show loading
             this.showLoading();
             
-            // Load winner data
-            await this.loadWinnerData();
+            // Load data and initialize in parallel where possible
+            const [winnersData] = await Promise.all([
+                this.loadWinnerData(),
+                this.preloadAssets() // Preload 3D models
+            ]);
             
-            // Initialize globe
             await this.initGlobe();
-            
-            // Setup event listeners
             this.setupEventListeners();
-            
-            // Update stats
             this.updateStats();
-            
-            // Hide loading
             this.hideLoading();
+            
+            // Start performance monitoring
+            this.startPerformanceMonitoring();
             
         } catch (error) {
             console.error('Error initializing globe:', error);
@@ -42,8 +75,74 @@ class WinnerGlobe {
         }
     }
 
+    async preloadAssets() {
+        // Preload 3D models and textures to avoid loading delays
+        const loader = new THREE.GLTFLoader();
+        try {
+            const gltf = await new Promise((resolve, reject) => {
+                loader.load('assets/Archive/location tag.gltf', resolve, undefined, reject);
+            });
+            this.baseModel = gltf.scene.children[0];
+            
+            // Pre-create a pool of pin objects
+            this.initializeObjectPool();
+        } catch (error) {
+            console.warn('Could not preload 3D model, falling back to simple pins');
+            this.useSimplePins = true;
+        }
+    }
+
+    initializeObjectPool() {
+        // Create a pool of reusable pin objects
+        const poolSize = Math.min(this.maxVisiblePins, 50);
+        for (let i = 0; i < poolSize; i++) {
+            const pin = this.createPinObject();
+            this.objectPool.set(i, { object: pin, inUse: false });
+        }
+    }
+
+    createPinObject() {
+        if (this.baseModel) {
+            const pin = this.baseModel.clone();
+            pin.traverse(child => {
+                if (child.material) {
+                    child.material = child.material.clone();
+                }
+            });
+            pin.scale.set(0.8, 0.8, 0.8); // Slightly smaller for better performance
+            pin.rotation.x = Math.PI / 6;
+            return pin;
+        } else {
+            // Fallback to simple geometric pin
+            const geometry = new THREE.ConeGeometry(0.02, 0.1, 8);
+            const material = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+            return new THREE.Mesh(geometry, material);
+        }
+    }
+
+    getPooledObject() {
+        for (const [key, item] of this.objectPool) {
+            if (!item.inUse) {
+                item.inUse = true;
+                return { key, object: item.object };
+            }
+        }
+        // If pool is exhausted, create new object (shouldn't happen often)
+        const pin = this.createPinObject();
+        const key = this.objectPool.size;
+        this.objectPool.set(key, { object: pin, inUse: true });
+        return { key, object: pin };
+    }
+
+    returnToPool(key) {
+        const item = this.objectPool.get(key);
+        if (item) {
+            item.inUse = false;
+        }
+    }
+
     showLoading() {
-        const globeContainer = document.getElementById('globeViz');
+        const globeContainer = this.getDOMElement('globeViz');
         globeContainer.innerHTML = `
             <div class="loading">
                 <div class="spinner"></div>
@@ -57,7 +156,7 @@ class WinnerGlobe {
     }
 
     showError(message) {
-        const globeContainer = document.getElementById('globeViz');
+        const globeContainer = this.getDOMElement('globeViz');
         globeContainer.innerHTML = `
             <div class="loading">
                 <p style="color: #ff6b6b;">${message}</p>
@@ -72,11 +171,28 @@ class WinnerGlobe {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             this.winnersData = await response.json();
+            this.filteredData = [...this.winnersData]; // Initial filtered data
+            
+            // Pre-process data for better performance
+            this.preprocessData();
+            
         } catch (error) {
             console.error('Error loading winner data:', error);
-            // Fallback to sample data if JSON fails to load
             this.winnersData = this.getSampleData();
+            this.filteredData = [...this.winnersData];
+            this.preprocessData();
         }
+    }
+
+    preprocessData() {
+        // Add computed properties to avoid repeated calculations
+        this.winnersData.forEach(winner => {
+            winner.colorHex = this.getPointColor(winner);
+            winner.hasValidCoords = !!(winner.lat && winner.lng);
+        });
+        
+        // Sort by priority (can be customized)
+        this.winnersData.sort((a, b) => b.year - a.year);
     }
 
     getSampleData() {
@@ -116,130 +232,103 @@ class WinnerGlobe {
 
     async initGlobe() {
         try {
+            // Load geographic data efficiently
             const [countries, states] = await Promise.all([
-                fetch('https://raw.githubusercontent.com/vasturiano/react-globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson').then(res => res.json()),
-                fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json').then(res => res.json())
+                this.loadGeographicData('countries'),
+                this.loadGeographicData('states')
             ]);
             
-            const globeContainer = document.getElementById('globeViz');
-
-            // Create the globe instance
-            this.globe = Globe()(globeContainer)
-                .backgroundColor('#87CEFA') // Lighter blue ocean
+            const globeContainer = this.getDOMElement('globeViz');
+            
+            // Initialize globe with performance optimizations
+            this.globe = Globe({
+                rendererConfig: {
+                    antialias: window.devicePixelRatio < 2, // Disable antialiasing on high DPI
+                    alpha: false, // Disable transparency for better performance
+                    powerPreference: "high-performance"
+                }
+            })(globeContainer)
+                .backgroundColor('#d4dfed')
                 .globeMaterial(new THREE.MeshPhongMaterial({ color: '#87CEFA' }))
                 .polygonsData([...countries.features, ...states.features])
-                .polygonCapColor(feat => {
-                    // US country polygon
-                    if (feat.properties.ADMIN === 'United States of America') {
-                        return '#FF7F7F'; // Light red for US
-                    }
-                    // US states (from states.geojson) - make transparent
-                    if (feat.properties.hasOwnProperty('name') && !feat.properties.ADMIN) {
-                        return 'rgba(0,0,0,0)'; // Transparent for US states
-                    }
-                    // Other countries
-                    return '#808080'; // Gray
-                })
+                .polygonCapColor(this.getPolygonColor.bind(this))
                 .polygonSideColor(() => '#000000')
                 .polygonAltitude(feat => feat.properties.hasOwnProperty('name') ? 0.006 : 0.005)
                 .enablePointerInteraction(true);
 
-            // Use custom SVG pin objects
-            await this.setupCustomObjects();
-
-            // Responsive altitude and positioning based on window size
-            const getResponsiveSettings = () => {
-                if (window.innerWidth < 320) {
-                    return { altitude: 4.0, lat: 39.8283, lng: -98.5795 };
-                } else if (window.innerWidth < 360) {
-                    return { altitude: 3.8, lat: 39.8283, lng: -98.5795 };
-                } else if (window.innerWidth < 480) {
-                    return { altitude: 3.5, lat: 39.8283, lng: -98.5795 };
-                } else if (window.innerWidth < 768) {
-                    return { altitude: 3.0, lat: 39.8283, lng: -98.5795 };
-                } else if (window.innerWidth < 900) {
-                    return { altitude: 2.5, lat: 39.8283, lng: -98.5795 };
-                } else {
-                    return { altitude: 2.0, lat: 39.8283, lng: -98.5795 };
-                }
-            };
-
-            // Set initial view to center on US
-            const initialSettings = getResponsiveSettings();
-            this.globe.pointOfView({
-                lat: initialSettings.lat,
-                lng: initialSettings.lng,
-                altitude: initialSettings.altitude
-            });
-
-            // Update zoom and positioning on resize
-            window.addEventListener('resize', () => {
-                const settings = getResponsiveSettings();
-                this.globe.pointOfView({
-                    lat: settings.lat,
-                    lng: settings.lng,
-                    altitude: settings.altitude
-                });
-            });
-
-            // Ensure globe is centered after initialization
-            setTimeout(() => {
-                this.globe.pointOfView({
-                    lat: initialSettings.lat,
-                    lng: initialSettings.lng,
-                    altitude: initialSettings.altitude
-                });
-            }, 100);
-
-            // Additional centering after a longer delay to ensure everything is loaded
-            setTimeout(() => {
-                this.globe.pointOfView({
-                    lat: initialSettings.lat,
-                    lng: initialSettings.lng,
-                    altitude: initialSettings.altitude
-                });
-            }, 500);
-
-            // Force a resize event to ensure proper centering
-            setTimeout(() => {
-                window.dispatchEvent(new Event('resize'));
-            }, 1000);
+            // Set up optimized custom objects
+            await this.setupOptimizedObjects();
+            
+            // Set initial responsive view
+            this.setResponsiveView();
+            
+            // Add resize handler
+            window.addEventListener('resize', this.debouncedResize);
+            
+            // Force initial positioning
+            setTimeout(() => this.setResponsiveView(), 100);
+            
         } catch (err) {
             console.error('Error loading geographic data:', err);
             this.showError('Failed to load geographic data. Please check your internet connection.');
         }
     }
 
-    async setupCustomObjects() {
-        // Load the GLTF pin model once
-        const loader = new THREE.GLTFLoader();
-        const gltf = await new Promise((resolve, reject) => {
-            loader.load('assets/Archive/location tag.gltf', resolve, undefined, reject);
-        });
-        // Find the main mesh in the loaded scene
-        const baseObject = gltf.scene.children[0];
+    async loadGeographicData(type) {
+        const urls = {
+            countries: 'https://raw.githubusercontent.com/vasturiano/react-globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson',
+            states: 'https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json'
+        };
+        
+        const response = await fetch(urls[type]);
+        return await response.json();
+    }
 
-        const pins = this.winnersData.filter(d => d.lat && d.lng).map(winner => {
-            // Clone the model for each winner
-            const pin = baseObject.clone();
+    getPolygonColor(feat) {
+        // Optimized polygon coloring
+        if (feat.properties.ADMIN === 'United States of America') {
+            return '#FF7F7F';
+        }
+        if (feat.properties.hasOwnProperty('name') && !feat.properties.ADMIN) {
+            return 'rgba(0,0,0,0)';
+        }
+        return '#808080';
+    }
+
+    async setupOptimizedObjects() {
+        // Limit visible pins for performance
+        const visibleWinners = this.filteredData
+            .filter(d => d.hasValidCoords)
+            .slice(0, this.maxVisiblePins);
+
+        const pins = visibleWinners.map(winner => {
+            const pooledPin = this.getPooledObject();
+            const pin = pooledPin.object;
+            
+            // Set color efficiently
             pin.traverse(child => {
                 if (child.material) {
-                    child.material = child.material.clone();
+                    child.material.color.setHex(parseInt(winner.colorHex.replace('#', ''), 16));
                 }
             });
-            pin.scale.set(1, 1, 1); // Reduced size by 50%
-            // Tilt the pin by 30 degrees (Math.PI/6 radians) around the X axis
-            pin.rotation.x = Math.PI / 6;
-            pin.userData = { winner };
+            
+            pin.userData = { 
+                winner, 
+                poolKey: pooledPin.key,
+                lastUpdate: Date.now()
+            };
+            
             return {
                 lat: winner.lat,
                 lng: winner.lng,
-                altitude: 0.01, // Closer to the globe
+                altitude: 0.01,
                 threeObject: pin,
                 winner
             };
         });
+
         this.customObjects = pins;
+        
         this.globe
             .objectsData(this.customObjects)
             .objectLat('lat')
@@ -247,173 +336,115 @@ class WinnerGlobe {
             .objectAltitude('altitude')
             .objectThreeObject('threeObject')
             .onObjectClick(obj => this.showWinnerDetails(obj.winner))
-            .onObjectHover((obj, prevObj) => {
-                // Restore previous pin opacity if any
-                if (prevObj && prevObj.threeObject) {
-                    prevObj.threeObject.traverse(child => {
-                        if (child.material && child.material.transparent !== undefined) {
-                            child.material.transparent = true;
-                            child.material.opacity = 1;
-                        }
-                    });
-                }
-                // Make pin semi-transparent and show popup if hovering
-                if (obj && obj.threeObject) {
-                    obj.threeObject.traverse(child => {
-                        if (child.material && child.material.transparent !== undefined) {
-                            child.material.transparent = true;
-                            child.material.opacity = 0.3;
-                        }
-                    });
-                    this.showWinnerPopup(obj.winner);
-                } else {
-                    this.hideWinnerPopup();
-                }
-            });
+            .onObjectHover(this.throttledHover.bind(this));
 
-        // Track mouse for popup position
+        // Optimized mouse tracking
+        this.setupOptimizedMouseTracking();
+    }
+
+    throttledHover(obj, prevObj) {
+        const now = Date.now();
+        if (now - this.lastUpdateTime < this.updateThrottle) {
+            return;
+        }
+        this.lastUpdateTime = now;
+        
+        this.handleObjectHover(obj, prevObj);
+    }
+
+    handleObjectHover(obj, prevObj) {
+        // Batch DOM updates
+        requestAnimationFrame(() => {
+            if (prevObj && prevObj.threeObject) {
+                this.resetPinOpacity(prevObj.threeObject);
+            }
+            
+            if (obj && obj.threeObject) {
+                this.setPinOpacity(obj.threeObject, 0.3);
+                this.showWinnerPopup(obj.winner);
+            } else {
+                this.hideWinnerPopup();
+            }
+        });
+    }
+
+    setPinOpacity(pin, opacity) {
+        pin.traverse(child => {
+            if (child.material) {
+                child.material.transparent = true;
+                child.material.opacity = opacity;
+            }
+        });
+    }
+
+    resetPinOpacity(pin) {
+        pin.traverse(child => {
+            if (child.material) {
+                child.material.transparent = false;
+                child.material.opacity = 1;
+            }
+        });
+    }
+
+    setupOptimizedMouseTracking() {
         if (!this._popupMouseMoveHandler) {
-            this._popupMouseMoveHandler = (e) => {
-                const popup = document.getElementById('winner-popup');
+            this._popupMouseMoveHandler = this.throttle((e) => {
+                const popup = this.getDOMElement('winner-popup');
                 if (popup && popup.style.display !== 'none') {
                     const popupWidth = popup.offsetWidth;
-                    // Center horizontally below cursor, 24px below for cone
                     popup.style.left = (e.clientX - popupWidth / 2) + 'px';
                     popup.style.top = (e.clientY + 24) + 'px';
-                    // Cone should point to the center
                     popup.style.setProperty('--pointer-x', (popupWidth / 2) + 'px');
                 }
-            };
-            window.addEventListener('mousemove', this._popupMouseMoveHandler);
+            }, 16); // ~60fps
+            
+            window.addEventListener('mousemove', this._popupMouseMoveHandler, { passive: true });
         }
     }
 
-    setupFallbackPoints() {
-        console.log('Setting up fallback points');
-        
-        this.globe
-            .pointsData(this.winnersData.filter(d => d.lat && d.lng))
-            .pointLat(d => d.lat)
-            .pointLng(d => d.lng)
-            .pointColor(d => this.getPointColor(d))
-            .pointAltitude(0.02)
-            .pointRadius(2.5)
-            .pointLabel(d => this.getPointLabel(d))
-            .onPointClick(this.onPointClick.bind(this))
-            .onPointHover(this.onPointHover.bind(this));
-    }
-
-    async createCustomPin(winner) {
-        if (!this.pinFactory) {
-            console.warn('Pin factory not available');
-            return null;
-        }
-        
-        try {
-            // Get color based on category
-            const color = this.getPointColor(winner);
-            
-            // Create animated pin for better visual appeal (now async)
-            const pin = await this.pinFactory.createAnimatedPin(color, 1.0);
-            
-            // Store winner data for later reference
-            pin.userData = {
-                ...pin.userData,
-                winner: winner,
-                originalColor: color
-            };
-            
-            return pin;
-        } catch (error) {
-            console.error('Error creating custom pin for', winner.name, ':', error);
-            return null;
-        }
+    throttle(func, limit) {
+        let inThrottle;
+        return function() {
+            const args = arguments;
+            const context = this;
+            if (!inThrottle) {
+                func.apply(context, args);
+                inThrottle = true;
+                setTimeout(() => inThrottle = false, limit);
+            }
+        };
     }
 
     getPointColor(winner) {
-        // Return different colors based on category, as per README
-        if (winner.category) {
-            switch(winner.category.toLowerCase()) {
-                case 'innovation':
-                    return '#FF6B6B'; // Red
-                case 'excellence':
-                    return '#4ECDC4'; // Teal
-                case 'leadership':
-                    return '#45B7D1'; // Blue
-                case 'community impact':
-                    return '#96CEB4'; // Green
-                default:
-                    return '#FFFFFF'; // Default white
-            }
-        }
-        return '#FFFFFF'; // Default white
-    }
-
-    getPointLabel(winner) {
-        return `
-            <div style="background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; color: white; font-size: 12px; max-width: 200px;">
-                <strong>${winner.name}</strong><br/>
-                ${winner.city}, ${winner.state}<br/>
-                ${winner.year} - ${winner.prize}<br/>
-                Category: ${winner.category}
-            </div>
-        `;
-    }
-
-    onPointClick(point) {
-        if (point) {
-            this.showWinnerDetails(point);
-            // Animate to point
-            this.globe.pointOfView({
-                lat: point.lat,
-                lng: point.lng,
-                altitude: 1.5
-            }, 1000);
-        }
-    }
-
-    onPointHover(point) {
-        if (point) {
-            this.showWinnerDetails(point);
-        } else {
-            this.clearWinnerDetails();
-        }
+        // Cached color lookup
+        const colorMap = {
+            'innovation': '#FF6B6B',
+            'excellence': '#4ECDC4',
+            'leadership': '#45B7D1',
+            'community impact': '#96CEB4'
+        };
+        
+        return colorMap[winner.category?.toLowerCase()] || '#FFFFFF';
     }
 
     showWinnerDetails(winner) {
-        const panel = document.getElementById('selectedWinner');
+        const panel = this.getDOMElement('selectedWinner');
         if (panel) {
+            // Use template literals for better performance
             panel.innerHTML = `
                 <div class="winner-details">
-                    <div class="winner-detail">
-                        <strong>Name:</strong> ${winner.name}
-                    </div>
-                    <div class="winner-detail">
-                        <strong>Location:</strong> ${winner.city}, ${winner.state}
-                    </div>
-                    <div class="winner-detail">
-                        <strong>Year:</strong> ${winner.year}
-                    </div>
-                    <div class="winner-detail">
-                        <strong>Prize:</strong> ${winner.prize}
-                    </div>
-                    <div class="winner-detail">
-                        <strong>Category:</strong> ${winner.category}
-                    </div>
+                    <div class="winner-detail"><strong>Name:</strong> ${winner.name}</div>
+                    <div class="winner-detail"><strong>Location:</strong> ${winner.city}, ${winner.state}</div>
+                    <div class="winner-detail"><strong>Year:</strong> ${winner.year}</div>
+                    <div class="winner-detail"><strong>Prize:</strong> ${winner.prize}</div>
+                    <div class="winner-detail"><strong>Category:</strong> ${winner.category}</div>
                 </div>
             `;
         }
     }
 
-    clearWinnerDetails() {
-        const panel = document.getElementById('selectedWinner');
-        if (panel) {
-            panel.innerHTML = '<p>Hover over a pin to see winner details</p>';
-        }
-    }
-
     showWinnerPopup(winner) {
-        const popup = document.getElementById('winner-popup');
+        const popup = this.getDOMElement('winner-popup');
         if (popup) {
             popup.innerHTML = `
                 <div class="winner-popup-content">
@@ -428,132 +459,109 @@ class WinnerGlobe {
     }
 
     hideWinnerPopup() {
-        const popup = document.getElementById('winner-popup');
+        const popup = this.getDOMElement('winner-popup');
         if (popup) {
             popup.style.display = 'none';
         }
     }
 
-    startPinAnimation() {
-        if (!this.globe || !this.pinFactory || !this.useCustomPins) return;
+    setupEventListeners() {
+        // Use event delegation for better performance
+        document.addEventListener('click', this.handleGlobalClick.bind(this));
+        document.addEventListener('keydown', this.handleKeydown.bind(this));
         
-        const animate = () => {
-            const time = (Date.now() - this.startTime) * 0.001;
+        // Optimized touch handling
+        this.setupOptimizedTouchHandling();
+    }
+
+    handleGlobalClick(e) {
+        const target = e.target;
+        const id = target.id;
+        
+        switch(id) {
+            case 'autoRotateBtn':
+                this.toggleAutoRotate();
+                break;
+            case 'animatePinsBtn':
+                this.animatePins();
+                break;
+            case 'resetViewBtn':
+                this.resetView();
+                break;
+            case 'changePinStyleBtn':
+                this.changePinStyle();
+                break;
+        }
+        
+        // Handle filter buttons
+        if (target.classList.contains('filter-btn')) {
+            const category = target.dataset.category;
+            this.filterByCategory(category);
             
-            // Update all custom objects
-            if (this.customObjects && this.customObjects.length > 0) {
-                this.customObjects.forEach(obj => {
-                    if (obj.threeObject && obj.threeObject.userData && obj.threeObject.userData.isAnimated) {
-                        this.pinFactory.updateAnimation(obj.threeObject, time);
-                    }
-                });
-            }
-            
-            this.animationId = requestAnimationFrame(animate);
+            // Update active state efficiently
+            document.querySelectorAll('.filter-btn').forEach(btn => 
+                btn.classList.remove('active'));
+            target.classList.add('active');
+        }
+    }
+
+    handleKeydown(e) {
+        if (!this.globe) return;
+        
+        const keyActions = {
+            'r': 'autoRotateBtn',
+            'R': 'autoRotateBtn',
+            'a': 'animatePinsBtn',
+            'A': 'animatePinsBtn',
+            'p': 'changePinStyleBtn',
+            'P': 'changePinStyleBtn',
+            'Escape': 'resetViewBtn'
         };
         
-        animate();
-    }
-
-    stopPinAnimation() {
-        if (this.animationId) {
-            cancelAnimationFrame(this.animationId);
-            this.animationId = null;
+        const buttonId = keyActions[e.key];
+        if (buttonId) {
+            const button = this.getDOMElement(buttonId);
+            if (button) button.click();
         }
     }
 
-    setupEventListeners() {
-        // Auto-rotate toggle
-        const autoRotateBtn = document.getElementById('autoRotateBtn');
-        if (autoRotateBtn) {
-            autoRotateBtn.addEventListener('click', () => {
-                this.toggleAutoRotate();
-            });
-        }
-
-        // Animate pins
-        const animatePinsBtn = document.getElementById('animatePinsBtn');
-        if (animatePinsBtn) {
-            animatePinsBtn.addEventListener('click', () => {
-                this.animatePins();
-            });
-        }
-
-        // Reset view
-        const resetViewBtn = document.getElementById('resetViewBtn');
-        if (resetViewBtn) {
-            resetViewBtn.addEventListener('click', () => {
-                this.resetView();
-            });
-        }
-
-        // Change pin style
-        const changePinStyleBtn = document.getElementById('changePinStyleBtn');
-        if (changePinStyleBtn) {
-            changePinStyleBtn.addEventListener('click', () => {
-                this.changePinStyle();
-            });
-        }
-
-        // Category filter buttons
-        const filterButtons = document.querySelectorAll('.filter-btn');
-        filterButtons.forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const category = e.target.dataset.category;
-                this.filterByCategory(category);
-                
-                // Update active state
-                filterButtons.forEach(b => b.classList.remove('active'));
-                e.target.classList.add('active');
-            });
-        });
-
-        // --- Touch gesture support for mobile ---
-        const globeContainer = document.getElementById('globeViz');
-        let lastTouchEnd = 0;
-        let lastTap = 0;
+    setupOptimizedTouchHandling() {
+        const globeContainer = this.getDOMElement('globeViz');
         let pinchStartDist = null;
         let pinchStartAltitude = null;
-        let pinchOngoing = false;
+        let lastTap = 0;
 
-        // Helper to get distance between two touches
-        function getTouchDist(e) {
+        const getTouchDist = (e) => {
             const dx = e.touches[0].clientX - e.touches[1].clientX;
             const dy = e.touches[0].clientY - e.touches[1].clientY;
             return Math.sqrt(dx * dx + dy * dy);
-        }
+        };
 
-        // Pinch-to-zoom
+        const throttledPinchMove = this.throttle((e) => {
+            if (e.touches.length === 2) {
+                const newDist = getTouchDist(e);
+                const scale = pinchStartDist ? newDist / pinchStartDist : 1;
+                const newAltitude = Math.max(0.5, Math.min(8, pinchStartAltitude / scale));
+                this.globe.pointOfView({ altitude: newAltitude });
+            }
+        }, 16);
+
         globeContainer.addEventListener('touchstart', (e) => {
             if (e.touches.length === 2) {
                 pinchStartDist = getTouchDist(e);
                 pinchStartAltitude = this.globe.pointOfView().altitude;
-                pinchOngoing = true;
             }
-        }, { passive: false });
+        }, { passive: true });
 
-        globeContainer.addEventListener('touchmove', (e) => {
-            if (e.touches.length === 2 && pinchOngoing) {
-                e.preventDefault(); // Prevent page scroll
-                const newDist = getTouchDist(e);
-                const scale = pinchStartDist ? newDist / pinchStartDist : 1;
-                let newAltitude = pinchStartAltitude / scale;
-                // Clamp altitude
-                newAltitude = Math.max(0.5, Math.min(8, newAltitude));
-                this.globe.pointOfView({ altitude: newAltitude });
-            }
-        }, { passive: false });
+        globeContainer.addEventListener('touchmove', throttledPinchMove, { passive: false });
 
         globeContainer.addEventListener('touchend', (e) => {
             if (e.touches.length < 2) {
-                pinchOngoing = false;
                 pinchStartDist = null;
                 pinchStartAltitude = null;
             }
-        });
-
-        // Double-tap to reset view
-        globeContainer.addEventListener('touchend', (e) => {
+            
+            // Double-tap detection
             const now = Date.now();
             if (e.touches.length === 0) {
                 if (now - lastTap < 350) {
@@ -563,67 +571,74 @@ class WinnerGlobe {
                     lastTap = now;
                 }
             }
-        });
+        }, { passive: true });
+    }
 
-        // Prevent double-tap zoom and unwanted gestures
-        globeContainer.addEventListener('gesturestart', e => e.preventDefault());
-        globeContainer.addEventListener('gesturechange', e => e.preventDefault());
-        globeContainer.addEventListener('gestureend', e => e.preventDefault());
+    setResponsiveView() {
+        const settings = this.getResponsiveSettings();
+        this.globe.pointOfView(settings);
+    }
+
+    getResponsiveSettings() {
+        const width = window.innerWidth;
+        const breakpoints = [
+            { max: 320, altitude: 4.0 },
+            { max: 360, altitude: 3.8 },
+            { max: 480, altitude: 3.5 },
+            { max: 768, altitude: 3.0 },
+            { max: 900, altitude: 2.5 },
+            { max: Infinity, altitude: 2.0 }
+        ];
+        
+        const setting = breakpoints.find(bp => width < bp.max);
+        return {
+            lat: 39.8283,
+            lng: -98.5795,
+            altitude: setting.altitude
+        };
+    }
+
+    handleResize() {
+        if (this.globe) {
+            this.setResponsiveView();
+        }
     }
 
     toggleAutoRotate() {
         this.isAutoRotating = !this.isAutoRotating;
-        const button = document.getElementById('autoRotateBtn');
+        const button = this.getDOMElement('autoRotateBtn');
         
         if (this.isAutoRotating) {
             button.textContent = '🔄 Stop Auto Rotate';
             button.style.background = 'rgba(255, 107, 107, 0.3)';
-            this.startAutoRotate();
+            this.globe.controls().autoRotate = true;
+            this.globe.controls().autoRotateSpeed = this.animationSpeed;
         } else {
             button.textContent = '🔄 Auto Rotate';
             button.style.background = 'rgba(255, 255, 255, 0.2)';
-            this.stopAutoRotate();
+            this.globe.controls().autoRotate = false;
         }
     }
 
-    startAutoRotate() {
-        if (!this.globe) return;
-        
-        this.globe.controls().autoRotate = true;
-        this.globe.controls().autoRotateSpeed = this.animationSpeed;
-    }
-
-    stopAutoRotate() {
-        if (!this.globe) return;
-        
-        this.globe.controls().autoRotate = false;
-    }
-
     animatePins() {
-        if (!this.winnersData || this.winnersData.length === 0) return;
+        if (!this.filteredData || this.filteredData.length === 0) return;
         
         let index = 0;
         const animateNext = () => {
-            if (index < this.winnersData.length) {
-                const winner = this.winnersData[index];
+            if (index < this.filteredData.length) {
+                const winner = this.filteredData[index];
                 
-                // Animate to winner location
                 this.globe.pointOfView({
                     lat: winner.lat,
                     lng: winner.lng,
                     altitude: 1.2
                 }, 1000);
 
-                // Show winner details
                 this.showWinnerDetails(winner);
-                
                 index++;
                 setTimeout(animateNext, 2000);
             } else {
-                // Reset view after animation
-                setTimeout(() => {
-                    this.resetView();
-                }, 1000);
+                setTimeout(() => this.resetView(), 1000);
             }
         };
         
@@ -633,118 +648,163 @@ class WinnerGlobe {
     resetView() {
         if (!this.globe) return;
         
-        // Responsive altitude and positioning based on window size
-        const getResponsiveSettings = () => {
-            if (window.innerWidth < 320) {
-                return { altitude: 4.0, lat: 39.8283, lng: -98.5795 };
-            } else if (window.innerWidth < 360) {
-                return { altitude: 3.8, lat: 39.8283, lng: -98.5795 };
-            } else if (window.innerWidth < 480) {
-                return { altitude: 3.5, lat: 39.8283, lng: -98.5795 };
-            } else if (window.innerWidth < 768) {
-                return { altitude: 3.0, lat: 39.8283, lng: -98.5795 };
-            } else if (window.innerWidth < 900) {
-                return { altitude: 2.5, lat: 39.8283, lng: -98.5795 };
-            } else {
-                return { altitude: 2.0, lat: 39.8283, lng: -98.5795 };
-            }
-        };
-        
-        // Reset to US view
-        const settings = getResponsiveSettings();
-        this.globe.pointOfView({
-            lat: settings.lat,
-            lng: settings.lng,
-            altitude: settings.altitude
-        }, 1000);
-        
-        // Clear winner details
+        const settings = this.getResponsiveSettings();
+        this.globe.pointOfView(settings, 1000);
         this.clearWinnerDetails();
     }
 
-    changePinStyle() {
-        if (!this.globe || !this.pinFactory || !this.useCustomPins) return;
-        try {
-            // Create a new array with new pin objects
-            const colors = ['#1A237E', '#4CAF50', '#2196F3', '#FFD700', '#9C27B0'];
-            const newObjects = this.customObjects.map((obj, index) => {
-                const colorIndex = index % colors.length;
-                const newPin = this.pinFactory.createAnimatedPin(colors[colorIndex], 1.0);
-                newPin.userData = {
-                    ...newPin.userData,
-                    winner: obj.winner || obj
-                };
-                return {
-                    ...obj,
-                    threeObject: newPin
-                };
-            });
-            // Update the reference and refresh the globe
-            this.customObjects = newObjects;
-            this.globe.objectsData([...this.customObjects]);
-        } catch (error) {
-            console.error('Error changing pin style:', error);
+    clearWinnerDetails() {
+        const panel = this.getDOMElement('selectedWinner');
+        if (panel) {
+            panel.innerHTML = '<p>Hover over a pin to see winner details</p>';
         }
     }
 
-    updateStats() {
-        // Update total winners
-        const totalWinnersEl = document.getElementById('totalWinners');
-        if (totalWinnersEl) {
-            totalWinnersEl.textContent = this.winnersData.length;
-        }
+    changePinStyle() {
+        // Optimized pin style changing using object pool
+        const colors = ['#1A237E', '#4CAF50', '#2196F3', '#FFD700', '#9C27B0'];
         
-        // Update total categories
-        const totalCategoriesEl = document.getElementById('totalCategories');
-        if (totalCategoriesEl) {
-            const uniqueCategories = [...new Set(this.winnersData.map(w => w.category))];
-            totalCategoriesEl.textContent = uniqueCategories.length;
-        }
-        
-        // Update total years
-        const totalYearsEl = document.getElementById('totalYears');
-        if (totalYearsEl) {
-            const uniqueYears = [...new Set(this.winnersData.map(w => w.year))];
-            totalYearsEl.textContent = uniqueYears.length;
-        }
+        this.customObjects.forEach((obj, index) => {
+            const colorIndex = index % colors.length;
+            const color = colors[colorIndex];
+            
+            obj.threeObject.traverse(child => {
+                if (child.material) {
+                    child.material.color.setHex(parseInt(color.replace('#', ''), 16));
+                }
+            });
+        });
     }
 
     filterByCategory(category) {
+        // Use debounced filtering for better performance
+        this.debouncedFilter(category);
+    }
+
+    performFilter(category) {
         if (category === 'all') {
-            // Show all winners
-            if (this.useCustomPins && this.customObjects.length > 0) {
-                this.globe.objectsData(this.customObjects);
-            } else {
-                this.globe.pointsData(this.winnersData.filter(d => d.lat && d.lng));
-            }
+            this.filteredData = [...this.winnersData];
         } else {
-            // Filter by specific category
-            const filteredWinners = this.winnersData.filter(w => w.category === category);
-            
-            if (this.useCustomPins && this.customObjects.length > 0) {
-                const filteredObjects = this.customObjects.filter(obj => 
-                    obj.winner && obj.winner.category === category
-                );
-                this.globe.objectsData(filteredObjects);
-            } else {
-                this.globe.pointsData(filteredWinners.filter(d => d.lat && d.lng));
-            }
+            this.filteredData = this.winnersData.filter(w => w.category === category);
         }
         
-        // Update stats for filtered data
+        // Efficiently update visible objects
+        this.updateVisibleObjects();
         this.updateStats();
     }
 
-    // Cleanup method to stop animations
+    updateVisibleObjects() {
+        // Return unused objects to pool
+        this.customObjects.forEach(obj => {
+            if (obj.threeObject.userData.poolKey !== undefined) {
+                this.returnToPool(obj.threeObject.userData.poolKey);
+            }
+        });
+        
+        // Create new objects for filtered data
+        const visibleWinners = this.filteredData
+            .filter(d => d.hasValidCoords)
+            .slice(0, this.maxVisiblePins);
+
+        this.customObjects = visibleWinners.map(winner => {
+            const pooledPin = this.getPooledObject();
+            const pin = pooledPin.object;
+            
+            pin.traverse(child => {
+                if (child.material) {
+                    child.material.color.setHex(parseInt(winner.colorHex.replace('#', ''), 16));
+                }
+            });
+            
+            pin.userData = { 
+                winner, 
+                poolKey: pooledPin.key
+            };
+            
+            return {
+                lat: winner.lat,
+                lng: winner.lng,
+                altitude: 0.01,
+                threeObject: pin,
+                winner
+            };
+        });
+        
+        // Update globe data
+        this.globe.objectsData([...this.customObjects]);
+    }
+
+    updateStats() {
+        // Batch DOM updates
+        requestAnimationFrame(() => {
+            const totalWinnersEl = this.getDOMElement('totalWinners');
+            if (totalWinnersEl) {
+                totalWinnersEl.textContent = this.filteredData.length;
+            }
+            
+            const totalCategoriesEl = this.getDOMElement('totalCategories');
+            if (totalCategoriesEl) {
+                const uniqueCategories = [...new Set(this.filteredData.map(w => w.category))];
+                totalCategoriesEl.textContent = uniqueCategories.length;
+            }
+            
+            const totalYearsEl = this.getDOMElement('totalYears');
+            if (totalYearsEl) {
+                const uniqueYears = [...new Set(this.filteredData.map(w => w.year))];
+                totalYearsEl.textContent = uniqueYears.length;
+            }
+        });
+    }
+
+    startPerformanceMonitoring() {
+        // Optional: Monitor performance and adjust settings
+        let frameCount = 0;
+        let lastTime = performance.now();
+        
+        const monitor = () => {
+            frameCount++;
+            const currentTime = performance.now();
+            
+            if (currentTime - lastTime >= 1000) {
+                const fps = frameCount;
+                frameCount = 0;
+                lastTime = currentTime;
+                
+                // Adjust quality based on FPS
+                if (fps < 30 && this.maxVisiblePins > 25) {
+                    this.maxVisiblePins = Math.max(25, this.maxVisiblePins - 10);
+                    console.log(`Reduced max visible pins to ${this.maxVisiblePins} due to low FPS`);
+                }
+            }
+            
+            requestAnimationFrame(monitor);
+        };
+        
+        requestAnimationFrame(monitor);
+    }
+
     cleanup() {
-        this.stopPinAnimation();
-        this.stopAutoRotate();
+        // Clean up resources
+        if (this.animationId) {
+            cancelAnimationFrame(this.animationId);
+        }
+        
+        window.removeEventListener('resize', this.debouncedResize);
+        window.removeEventListener('mousemove', this._popupMouseMoveHandler);
+        
+        // Return all objects to pool
+        this.customObjects.forEach(obj => {
+            if (obj.threeObject.userData.poolKey !== undefined) {
+                this.returnToPool(obj.threeObject.userData.poolKey);
+            }
+        });
+        
+        this.domCache.clear();
     }
 }
 
-// Initialize the globe when the page loads
+// Optimized initialization
 function initializeGlobe() {
-    // Check if required libraries are available
     if (typeof Globe === 'undefined') {
         console.error('Globe.gl library not loaded');
         const globeContainer = document.getElementById('globeViz');
@@ -775,40 +835,12 @@ function initializeGlobe() {
     }
 }
 
-// Multiple ways to ensure initialization
+// Use more efficient initialization
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeGlobe);
+    document.addEventListener('DOMContentLoaded', initializeGlobe, { once: true });
 } else {
-    // DOM is already ready
     initializeGlobe();
 }
-
-// Add keyboard shortcuts
-document.addEventListener('keydown', (e) => {
-    if (window.winnerGlobe) {
-        switch(e.key) {
-            case 'r':
-            case 'R':
-                const autoRotateBtn = document.getElementById('autoRotateBtn');
-                if (autoRotateBtn) autoRotateBtn.click();
-                break;
-            case 'a':
-            case 'A':
-                const animatePinsBtn = document.getElementById('animatePinsBtn');
-                if (animatePinsBtn) animatePinsBtn.click();
-                break;
-            case 'p':
-            case 'P':
-                const changePinStyleBtn = document.getElementById('changePinStyleBtn');
-                if (changePinStyleBtn) changePinStyleBtn.click();
-                break;
-            case 'Escape':
-                const resetViewBtn = document.getElementById('resetViewBtn');
-                if (resetViewBtn) resetViewBtn.click();
-                break;
-        }
-    }
-});
 
 // Export for potential use in other scripts
 window.WinnerGlobe = WinnerGlobe;
